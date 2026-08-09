@@ -1,0 +1,20 @@
+# Build and IDE artifacts
+bin/
+obj/
+.vs/
+singlefile-publish/
+*.user
+*.pdb
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.accdb
+
+# Local secrets and machine-specific configuration
+appsettings.Local.json
+
+# Logs and temporary files
+*.log
+*.tmp

@@ -1,0 +1,25 @@
+@host = http://localhost:5074
+@token = paste-access-token-here
+
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "login": "demo",
+  "password": "demo-password",
+  "deviceId": "DEMO-DEVICE-001"
+}
+
+###
+GET {{host}}/api/license/current
+Authorization: Bearer {{token}}
+
+###
+POST {{host}}/api/device/register
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "deviceId": "NEW-DEVICE-001",
+  "name": "Новая касса"
+}
