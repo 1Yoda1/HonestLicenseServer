@@ -4,8 +4,7 @@ api.honestflow.ru {
     reverse_proxy 127.0.0.1:5498
 }
 
-# Preferred same-origin website layout. Merge this handle into the site's
-# existing host block; replace the root directory with the real website path.
+# Same-origin website layout used on the Ubuntu server.
 honestflow.ru {
     encode zstd gzip
 
@@ -14,7 +13,7 @@ honestflow.ru {
     }
 
     handle {
-        root * /var/www/honestflow
+        root * /opt/honestserver/site
         try_files {path} /index.html
         file_server
     }
