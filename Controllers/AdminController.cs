@@ -225,7 +225,9 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status);
         return Ok(await query.OrderBy(x => x.RequestedAtUtc).Select(x => new
         { x.Id, clientId = x.Client.ExternalClientId, clientName = x.Client.Name,
-          deviceId = x.ExternalDeviceId, x.RequestedName, x.RequestedAddress,
+          clientInn = x.Client.Inn, deviceId = x.ExternalDeviceId,
+          x.RequestedName, x.RequestedAddress,
+          honestFlowVersion = x.RequestedHonestFlowVersion,
           x.Status, x.RequestedAtUtc, x.ResolvedAtUtc, x.Comment }).ToListAsync());
     }
 
@@ -244,6 +246,18 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
                 Address = request.Address ?? pending.RequestedAddress,
                 Comment = request.Comment, Status = "Active", RegisteredAtUtc = DateTime.UtcNow };
             db.Devices.Add(device); await db.SaveChangesAsync();
+        }
+        else if (device.Status == "Deleted")
+        {
+            device.Name = request.Name ?? pending.RequestedName;
+            device.Address = request.Address ?? pending.RequestedAddress;
+            device.Comment = request.Comment;
+            device.Status = "Active";
+            device.RegisteredAtUtc = DateTime.UtcNow;
+        }
+        else
+        {
+            return Conflict(new { error = "device_already_registered" });
         }
         pending.Status = "Approved"; pending.ResolvedAtUtc = DateTime.UtcNow; pending.Comment = request.Comment;
         var sessions = await db.RefreshTokens.Where(x => x.ClientId == pending.ClientId &&
@@ -352,6 +366,10 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
                     .Select(s => s.IdentificationCode).SingleOrDefault(),
                 db.ClientSettings.Where(s => s.ClientId == x.Id)
                     .Select(s => s.ChzToken).SingleOrDefault(),
+                db.ClientSettings.Where(s => s.ClientId == x.Id)
+                    .Select(s => s.RuDesktopEnabled).SingleOrDefault(),
+                db.ClientSettings.Where(s => s.ClientId == x.Id)
+                    .Select(s => s.RuDesktopAutoOfferPasswordSetup).SingleOrDefault(),
                 db.ClientSettings.Any(s => s.ClientId == x.Id &&
                     s.IdentificationCode != null && s.ChzToken != null)))
             .SingleOrDefaultAsync();
@@ -374,7 +392,9 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
             db.ClientSettings.Add(settings);
         }
         settings.IdentificationCode = request.IdentificationCode.Trim();
-        settings.ChzToken = request.ChzToken.Trim();
+        settings.ChzToken = Clean(request.ChzToken);
+        settings.RuDesktopEnabled = request.RuDesktopEnabled;
+        settings.RuDesktopAutoOfferPasswordSetup = request.RuDesktopAutoOfferPasswordSetup;
         foreach (var credential in client.Credentials.Where(x => x.IsActive))
         {
             credential.PasswordHash = PasswordHasher.Hash(settings.IdentificationCode);
@@ -454,6 +474,19 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
             x.Id, clientId = x.Client.ExternalClientId, x.ExternalDeviceId,
             x.Subject, x.Message, x.Contact, x.HonestFlowVersion, x.Status, x.CreatedAtUtc
         }).ToListAsync());
+    }
+
+    [HttpPut("support-requests/{id:int}/resolve")]
+    public async Task<IActionResult> ResolveSupportRequest(int id)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var request = await db.SupportRequests.SingleOrDefaultAsync(x => x.Id == id);
+        if (request is null) return NotFound(new { error = "support_request_not_found" });
+        if (request.Status is "Resolved" or "Closed") return NoContent();
+        request.Status = "Resolved";
+        AddAudit("SupportRequest.Resolved", "SupportRequest", id.ToString(), request.ClientId, new { });
+        await db.SaveChangesAsync();
+        return NoContent();
     }
 
     private bool IsAdmin()

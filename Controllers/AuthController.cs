@@ -46,14 +46,16 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
 
         var device = await db.Devices.SingleOrDefaultAsync(x =>
             x.ClientId == credential.ClientId && x.ExternalDeviceId == request.DeviceId);
-        if (device?.Status == "Disabled" || device?.Status == "Deleted")
+        if (device is not null && device.Status is not ("Active" or "Deleted"))
             return ApiProblems.Create(HttpContext, StatusCodes.Status403Forbidden,
                 "device_disabled", "Device is disabled");
 
-        var pair = CreateSession(credential.ClientId, device?.Id, request.DeviceId, null);
+        var registrationRequired = device is null || device.Status == "Deleted";
+        var pair = CreateSession(credential.ClientId, registrationRequired ? null : device?.Id,
+            request.DeviceId, null);
         await db.SaveChangesAsync();
         return Ok(new TokenResponse(
-            pair.AccessToken, pair.RefreshToken, 900, device is null,
+            pair.AccessToken, pair.RefreshToken, 900, registrationRequired,
             credential.Client.ExternalClientId, credential.Client.Name));
     }
 

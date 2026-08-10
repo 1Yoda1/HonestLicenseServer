@@ -94,9 +94,10 @@ X-Admin-Key: ADMIN_KEY
 1. HonestFlow создаёт постоянный deviceId установки.
 2. Отправляет password + deviceId в POST /api/auth/login.
 3. Для известного активного устройства получает обычную сессию.
-4. Для неизвестного устройства получает ограниченную сессию и
+4. Для неизвестного устройства или устройства со статусом `Deleted` получает ограниченную сессию и
    deviceRegistrationRequired=true.
-5. HonestFlow спрашивает у пользователя название ПК и физический адрес точки.
+5. HonestFlow берёт имя устройства из `Environment.MachineName` и спрашивает у
+   пользователя только физический адрес точки.
 6. Отправляет POST /api/device/request.
 7. HonestDesk одобряет или отклоняет заявку.
 8. После одобрения refresh связывает сессию с зарегистрированным устройством.
@@ -157,7 +158,9 @@ Rate limit:
 }
 ```
 
-Для неизвестного устройства `deviceRegistrationRequired` равен `true`.
+Для неизвестного устройства и устройства со статусом `Deleted`
+`deviceRegistrationRequired` равен `true`. `Disabled` по-прежнему получает
+`403 device_disabled` и не может начать повторную регистрацию.
 
 Ошибки: `400`, `401 invalid_credentials`, `403 client_disabled`,
 `403 device_disabled`, `429 rate_limit_exceeded`.
@@ -219,7 +222,8 @@ Rate limit: 30 запросов в минуту с одного IP.
 {
   "deviceId": "dcfc2927-7667-4c80-8b9f-2c47b29d4240",
   "name": "Касса 1",
-  "address": "Омск, ул. Советская, 31"
+  "address": "Омск, ул. Советская, 31",
+  "honestFlowVersion": "3.0.1.0"
 }
 ```
 
@@ -228,13 +232,14 @@ Rate limit: 30 запросов в минуту с одного IP.
 - `deviceId` — 1–128 символов, должен совпадать с Device ID сессии;
 - `name` — 1–200 символов;
 - `address` — 1–300 символов, обязательный физический адрес торговой точки,
-  не IP-адрес.
+  не IP-адрес;
+- `honestFlowVersion` — необязательная версия HonestFlow, до 100 символов.
 
 Откуда берёт: Client ID и Device ID из Bearer-сессии; проверяет `Devices` и
 существующие `DeviceRegistrationRequests`.
 
 Где хранит: `DeviceRegistrationRequests` (`RequestedName`,
-`RequestedAddress`, `Status=Pending`, время создания).
+`RequestedAddress`, `RequestedHonestFlowVersion`, `Status=Pending`, время создания).
 
 Ответ `202`:
 
@@ -246,8 +251,9 @@ Rate limit: 30 запросов в минуту с одного IP.
 }
 ```
 
-Повторный запрос для уже существующей завершённой заявки возвращает её
-текущее состояние. Ошибки: `400 device_id_does_not_match_token`,
+Для `Deleted` Device существующая завершённая заявка повторно переводится в
+`Pending` с новыми name/address/version; сама строка Device до Approve остаётся
+`Deleted`. Ошибки: `400 device_id_does_not_match_token`,
 `409 device_already_registered`, `401`, `403`.
 
 ### GET `/api/device/registration/current`
@@ -580,13 +586,15 @@ Rate limit: 5 заявок за 10 минут с одного IP. Максима
 
 ### GET `/api/admin/clients/{clientId}/integration-settings`
 
-Читает `ClientSettings` и возвращает пароль-идентификатор и токен ЧЗ:
+Читает `ClientSettings` и возвращает пароль-идентификатор, токен ЧЗ и настройки RuDesktop:
 
 ```json
 {
   "clientId": "...",
   "identificationCode": "HF-...",
   "chzToken": "...",
+  "ruDesktopEnabled": true,
+  "ruDesktopAutoOfferPasswordSetup": false,
   "isConfigured": true
 }
 ```
@@ -598,12 +606,15 @@ Rate limit: 5 заявок за 10 минут с одного IP. Максима
 ```json
 {
   "identificationCode": "HF-NEW-CODE",
-  "chzToken": "new-chz-token"
+  "chzToken": "new-chz-token",
+  "ruDesktopEnabled": true,
+  "ruDesktopAutoOfferPasswordSetup": false
 }
 ```
 
-Обновляет `ClientSettings` и заново создаёт PBKDF2-хеш во всех активных
-`Credentials` клиента. Ответ `204`.
+Обновляет `ClientSettings`, включая два флага RuDesktop, и заново создаёт
+PBKDF2-хеш во всех активных `Credentials` клиента. `chzToken` может быть `null`.
+Ответ `204`.
 
 ## 12. Admin API: устройства и заявки
 
@@ -662,7 +673,11 @@ Rate limit: 5 заявок за 10 минут с одного IP. Максима
 Возвращает заявки из `DeviceRegistrationRequests`. Без query-параметра по
 умолчанию показывает только `Pending`. Пустой `status` показывает все.
 
-Ответ содержит `requestedName`, `requestedAddress`, статус, даты и комментарий.
+Ответ содержит `id`, `clientId`, `clientName`, `clientInn`,
+`deviceId`, `requestedName`, `requestedAddress`, `honestFlowVersion`, `status`,
+`requestedAtUtc`, `resolvedAtUtc` и `comment`. `clientInn` берётся из
+текущей записи клиента; в заявке копия ИНН не хранится. У старых заявок
+`honestFlowVersion` может быть `null`.
 
 ### PUT `/api/admin/device-requests/{id}/approve`
 
@@ -675,8 +690,11 @@ Rate limit: 5 заявок за 10 минут с одного IP. Максима
 ```
 
 Если name/address не переданы, используются `RequestedName` и
-`RequestedAddress` из заявки. Создаёт `Devices`, переводит заявку в `Approved`
-и связывает ожидающие сессии с устройством. Ответ `200`: `{ "id": 10 }`.
+`RequestedAddress` из заявки. Для нового устройства создаёт `Devices`; для
+существующего `Deleted` Device повторно использует ту же строку, обновляет
+name/address/comment и переводит её в `Active`. Затем переводит заявку в
+`Approved` и связывает ожидающие сессии с устройством. `Disabled` Device этим
+endpoint не реактивируется. Ответ `200`: `{ "id": 10 }`.
 
 ### PUT `/api/admin/device-requests/{id}/reject`
 
@@ -874,8 +892,11 @@ Controller, ESM и LmModule; JSON, licenses, backup-архивы и постор
 Поля: `id`, `clientId`, `externalDeviceId`, `subject`, `message`, `contact`,
 `honestFlowVersion`, `status`, `createdAtUtc`.
 
-Сейчас отдельного административного endpoint для изменения статуса обращения
-нет.
+### PUT `/api/admin/support-requests/{id}/resolve`
+
+Переводит выбранное обращение в `Status=Resolved`. Повторный вызов для
+`Resolved`/`Closed` идемпотентен. Ответ `204`; `404 support_request_not_found`,
+если обращения нет.
 
 ## 16. Хранение данных
 
@@ -885,7 +906,7 @@ Controller, ESM и LmModule; JSON, licenses, backup-архивы и постор
 | `Credentials` | внутренний login и PBKDF2-хеш идентификатора | auth, admin |
 | `ClientSettings` | открытый identification code, токен ЧЗ, RuDesktop | auth, configuration, admin |
 | `Devices` | Device ID, имя, физический адрес, статус | auth, configuration, admin |
-| `DeviceRegistrationRequests` | заявки, запрошенные имя и адрес | HonestFlow, HonestDesk |
+| `DeviceRegistrationRequests` | заявки, запрошенные имя, адрес и версия HonestFlow | HonestFlow, HonestDesk |
 | `RefreshTokens` | хеши токенов и состояние сессий | auth |
 | `Licenses` | исходные grant-байты, JSON, подпись, keyId, статус | HonestFlow, HonestDesk |
 | `LicensePolicies` | версия, offline grace, срок политики | configuration |

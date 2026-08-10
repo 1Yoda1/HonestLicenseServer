@@ -21,11 +21,14 @@ public sealed record ClientConfiguration(
 
 public sealed record ClientIntegrationSettingsResponse(
     string ClientId, string? IdentificationCode, string? ChzToken,
+    bool RuDesktopEnabled, bool RuDesktopAutoOfferPasswordSetup,
     bool IsConfigured);
 
 public sealed record PutClientIntegrationSettingsRequest(
     [Required, StringLength(256, MinimumLength = 1)] string IdentificationCode,
-    [Required, StringLength(2048, MinimumLength = 1)] string ChzToken);
+    [StringLength(2048, MinimumLength = 1)] string? ChzToken,
+    bool RuDesktopEnabled,
+    bool RuDesktopAutoOfferPasswordSetup);
 
 public sealed record DeviceConfiguration(
     string DeviceId, string Name, string? Address, string Status);

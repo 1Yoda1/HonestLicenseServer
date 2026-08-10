@@ -324,14 +324,30 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         using var admin = factory.CreateClient();
         admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
         var requests = await admin.GetFromJsonAsync<JsonElement>("/api/admin/device-requests");
-        var approveId = requests.EnumerateArray().Single(x =>
-            x.GetProperty("deviceId").GetString() == "approve-device").GetProperty("id").GetInt32();
+        var approveRequest = requests.EnumerateArray().Single(x =>
+            x.GetProperty("deviceId").GetString() == "approve-device");
+        var approveId = approveRequest.GetProperty("id").GetInt32();
         var rejectId = requests.EnumerateArray().Single(x =>
             x.GetProperty("deviceId").GetString() == "reject-device").GetProperty("id").GetInt32();
+        Assert.Equal("Integration Client", approveRequest.GetProperty("clientName").GetString());
+        Assert.Equal("7701234567", approveRequest.GetProperty("clientInn").GetString());
+        Assert.Equal("Test physical address", approveRequest.GetProperty("requestedAddress").GetString());
+        Assert.Equal(JsonValueKind.Null, approveRequest.GetProperty("honestFlowVersion").ValueKind);
 
         var approve = await admin.PutAsJsonAsync($"/api/admin/device-requests/{approveId}/approve",
-            new { name = "Approved Device", address = "Approved address", comment = "ok" });
+            new { comment = "ok" });
         Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            var device = await db.Devices.SingleAsync(x => x.ExternalDeviceId == "approve-device");
+            Assert.Equal("Approve Device", device.Name);
+            Assert.Equal("Test physical address", device.Address);
+            Assert.Equal(device.Id, await db.RefreshTokens
+                .Where(x => x.RequestedExternalDeviceId == "approve-device")
+                .Select(x => x.DeviceId)
+                .SingleAsync());
+        }
         using var approvedDevice = AuthenticatedClient(ApiFactory.ApproveAccessToken);
         Assert.Equal(HttpStatusCode.OK,
             (await approvedDevice.GetAsync("/api/configuration/current")).StatusCode);
@@ -348,6 +364,222 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
     }
 
     [Fact]
+    public async Task Admin_soft_deletes_device_without_removing_database_history()
+    {
+        string externalDeviceId = "soft-delete-" + Guid.NewGuid().ToString("N");
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+
+        var create = await admin.PostAsJsonAsync("/api/admin/devices", new
+        {
+            clientId = "integration-client",
+            deviceId = externalDeviceId,
+            name = "Device to delete",
+            address = "Delete test address",
+            comment = "Preserve history"
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        int id = (await create.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32();
+        string refreshTokenValue = "refresh-" + Guid.NewGuid().ToString("N");
+        await using (var setupScope = factory.Services.CreateAsyncScope())
+        {
+            var db = setupScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            var device = await db.Devices.SingleAsync(x => x.Id == id);
+            var now = DateTime.UtcNow;
+            db.RefreshTokens.Add(new HonestLicenseServer.Models.RefreshToken
+            {
+                ClientId = device.ClientId,
+                DeviceId = device.Id,
+                RequestedExternalDeviceId = externalDeviceId,
+                AccessTokenHash = TokenHelper.Hash("access-" + refreshTokenValue),
+                AccessTokenExpiresAtUtc = now.AddHours(1),
+                TokenHash = TokenHelper.Hash(refreshTokenValue),
+                TokenFamilyId = Guid.NewGuid().ToString("N"),
+                CreatedAtUtc = now,
+                ExpiresAtUtc = now.AddDays(1)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var delete = await admin.PutAsJsonAsync($"/api/admin/devices/{id}", new
+        {
+            name = "Device to delete",
+            address = "Delete test address",
+            comment = "Preserve history",
+            status = "Deleted"
+        });
+        Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+
+        var devices = await admin.GetFromJsonAsync<JsonElement>(
+            "/api/admin/devices?clientId=integration-client");
+        var deleted = devices.EnumerateArray().Single(x =>
+            x.GetProperty("deviceId").GetString() == externalDeviceId);
+        Assert.Equal("Deleted", deleted.GetProperty("status").GetString());
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var stored = await scope.ServiceProvider.GetRequiredService<HonestDbContext>()
+            .Devices.SingleAsync(x => x.Id == id);
+        Assert.Equal("Deleted", stored.Status);
+        Assert.Equal("Delete test address", stored.Address);
+        var revokedSession = await scope.ServiceProvider.GetRequiredService<HonestDbContext>()
+            .RefreshTokens.SingleAsync(x => x.TokenHash == TokenHelper.Hash(refreshTokenValue));
+        Assert.NotNull(revokedSession.RevokedAtUtc);
+        Assert.Equal("device_disabled", revokedSession.RevokeReason);
+    }
+
+    [Fact]
+    public async Task Deleted_device_can_be_registered_again_and_reuses_device_and_pending_session()
+    {
+        string externalDeviceId = "reregister-" + Guid.NewGuid().ToString("N");
+        int deviceId;
+        int registrationRequestId;
+        await using (var setupScope = factory.Services.CreateAsyncScope())
+        {
+            var db = setupScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            int clientId = await db.Clients.Where(x => x.ExternalClientId == "integration-client")
+                .Select(x => x.Id).SingleAsync();
+            var now = DateTime.UtcNow.AddMinutes(-5);
+            var device = new HonestLicenseServer.Models.Device
+            {
+                ClientId = clientId,
+                ExternalDeviceId = externalDeviceId,
+                Name = "Old device name",
+                Address = "Old address",
+                Status = "Active",
+                RegisteredAtUtc = now
+            };
+            var oldRequest = new HonestLicenseServer.Models.DeviceRegistrationRequest
+            {
+                ClientId = clientId,
+                ExternalDeviceId = externalDeviceId,
+                RequestedName = "Old device name",
+                RequestedAddress = "Old address",
+                Status = "Approved",
+                RequestedAtUtc = now,
+                ResolvedAtUtc = now.AddMinutes(1)
+            };
+            db.AddRange(device, oldRequest);
+            await db.SaveChangesAsync();
+            deviceId = device.Id;
+            registrationRequestId = oldRequest.Id;
+        }
+
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        var delete = await admin.PutAsJsonAsync($"/api/admin/devices/{deviceId}", new
+        {
+            name = "Old device name",
+            address = "Old address",
+            comment = (string?)null,
+            status = "Deleted"
+        });
+        Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+
+        using var honestFlow = factory.CreateClient();
+        var login = await honestFlow.PostAsJsonAsync("/api/auth/login", new
+        {
+            password = "integration-password",
+            deviceId = externalDeviceId
+        });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var loginTokens = await login.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(loginTokens.GetProperty("deviceRegistrationRequired").GetBoolean());
+        string accessToken = loginTokens.GetProperty("accessToken").GetString()!;
+        string refreshToken = loginTokens.GetProperty("refreshToken").GetString()!;
+        honestFlow.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await honestFlow.GetAsync("/api/device/registration/current")).StatusCode);
+
+        var registration = await honestFlow.PostAsJsonAsync("/api/device/request", new
+        {
+            deviceId = externalDeviceId,
+            name = "Current machine name",
+            address = "Current physical address",
+            honestFlowVersion = "3.0-test"
+        });
+        Assert.Equal(HttpStatusCode.Accepted, registration.StatusCode);
+        var registrationResult = await registration.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(registrationRequestId, registrationResult.GetProperty("id").GetInt32());
+        Assert.Equal("Pending", registrationResult.GetProperty("status").GetString());
+
+        var approve = await admin.PutAsJsonAsync(
+            $"/api/admin/device-requests/{registrationRequestId}/approve", new { comment = "approved again" });
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+        var approvedStatus = await honestFlow.GetFromJsonAsync<JsonElement>(
+            "/api/device/registration/current");
+        Assert.Equal("Approved", approvedStatus.GetProperty("status").GetString());
+
+        await using (var verificationScope = factory.Services.CreateAsyncScope())
+        {
+            var db = verificationScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            var device = await db.Devices.SingleAsync(x => x.Id == deviceId);
+            Assert.Equal("Active", device.Status);
+            Assert.Equal("Current machine name", device.Name);
+            Assert.Equal("Current physical address", device.Address);
+            Assert.Equal("approved again", device.Comment);
+            Assert.Equal(deviceId, await db.RefreshTokens
+                .Where(x => x.TokenHash == TokenHelper.Hash(refreshToken))
+                .Select(x => x.DeviceId)
+                .SingleAsync());
+        }
+
+        var refresh = await honestFlow.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
+        Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+        var refreshedTokens = await refresh.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(refreshedTokens.GetProperty("deviceRegistrationRequired").GetBoolean());
+        honestFlow.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", refreshedTokens.GetProperty("accessToken").GetString());
+        Assert.Equal(HttpStatusCode.OK,
+            (await honestFlow.GetAsync("/api/configuration/current")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Disabled_device_login_remains_forbidden()
+    {
+        string externalDeviceId = "disabled-" + Guid.NewGuid().ToString("N");
+        int deviceId;
+        await using (var setupScope = factory.Services.CreateAsyncScope())
+        {
+            var db = setupScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            int clientId = await db.Clients.Where(x => x.ExternalClientId == "integration-client")
+                .Select(x => x.Id).SingleAsync();
+            var device = new HonestLicenseServer.Models.Device
+            {
+                ClientId = clientId,
+                ExternalDeviceId = externalDeviceId,
+                Name = "Disabled device",
+                Status = "Active",
+                RegisteredAtUtc = DateTime.UtcNow
+            };
+            db.Devices.Add(device);
+            await db.SaveChangesAsync();
+            deviceId = device.Id;
+        }
+
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        var disable = await admin.PutAsJsonAsync($"/api/admin/devices/{deviceId}", new
+        {
+            name = "Disabled device",
+            address = (string?)null,
+            comment = (string?)null,
+            status = "Disabled"
+        });
+        Assert.Equal(HttpStatusCode.NoContent, disable.StatusCode);
+
+        using var honestFlow = factory.CreateClient();
+        var login = await honestFlow.PostAsJsonAsync("/api/auth/login", new
+        {
+            password = "integration-password",
+            deviceId = externalDeviceId
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, login.StatusCode);
+        var problem = await login.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("device_disabled", problem.GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task Admin_can_read_and_update_client_integration_settings()
     {
         using var admin = factory.CreateClient();
@@ -358,15 +590,25 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.True(initial.GetProperty("isConfigured").GetBoolean());
         Assert.Equal("integration-password", initial.GetProperty("identificationCode").GetString());
         Assert.Equal("integration-chz-token", initial.GetProperty("chzToken").GetString());
+        Assert.True(initial.GetProperty("ruDesktopEnabled").GetBoolean());
+        Assert.False(initial.GetProperty("ruDesktopAutoOfferPasswordSetup").GetBoolean());
 
         var update = await admin.PutAsJsonAsync(
             "/api/admin/clients/integration-client/integration-settings",
-            new { identificationCode = "integration-password", chzToken = "integration-chz-token-updated" });
+            new
+            {
+                identificationCode = "integration-password",
+                chzToken = "integration-chz-token-updated",
+                ruDesktopEnabled = false,
+                ruDesktopAutoOfferPasswordSetup = true
+            });
         Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
 
         var updated = await admin.GetFromJsonAsync<JsonElement>(
             "/api/admin/clients/integration-client/integration-settings");
         Assert.Equal("integration-chz-token-updated", updated.GetProperty("chzToken").GetString());
+        Assert.False(updated.GetProperty("ruDesktopEnabled").GetBoolean());
+        Assert.True(updated.GetProperty("ruDesktopAutoOfferPasswordSetup").GetBoolean());
 
         using var loginClient = factory.CreateClient();
         var login = await loginClient.PostAsJsonAsync("/api/auth/login", new
@@ -374,6 +616,39 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
             password = "integration-password", deviceId = "integration-device"
         });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_resolves_support_request_and_reload_returns_resolved_status()
+    {
+        int requestId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            int clientId = await db.Clients.Where(x => x.ExternalClientId == "integration-client")
+                .Select(x => x.Id).SingleAsync();
+            var request = new HonestLicenseServer.Models.SupportRequest
+            {
+                ClientId = clientId,
+                ExternalDeviceId = "integration-device",
+                Subject = "Resolve integration request",
+                Message = "Resolve through admin API",
+                Contact = "integration",
+                Status = "Open",
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            db.SupportRequests.Add(request);
+            await db.SaveChangesAsync();
+            requestId = request.Id;
+        }
+
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        var resolve = await admin.PutAsync($"/api/admin/support-requests/{requestId}/resolve", null);
+        Assert.Equal(HttpStatusCode.NoContent, resolve.StatusCode);
+
+        var resolved = await admin.GetFromJsonAsync<JsonElement>("/api/admin/support-requests?status=Resolved");
+        Assert.Contains(resolved.EnumerateArray(), x => x.GetProperty("id").GetInt32() == requestId);
     }
 
     [Fact]
@@ -407,9 +682,25 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
 
         var registration = await client.PostAsJsonAsync("/api/device/request", new
         {
-            deviceId, name = "New shop computer", address = "Physical shop address"
+            deviceId, name = "New shop computer", address = "Physical shop address",
+            honestFlowVersion = new string('v', 101)
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, registration.StatusCode);
+
+        registration = await client.PostAsJsonAsync("/api/device/request", new
+        {
+            deviceId, name = "New shop computer", address = "Physical shop address",
+            honestFlowVersion = "3.0.1.0"
         });
         Assert.Equal(HttpStatusCode.Accepted, registration.StatusCode);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            var stored = await db.DeviceRegistrationRequests.SingleAsync(x => x.ExternalDeviceId == deviceId);
+            Assert.Equal("Physical shop address", stored.RequestedAddress);
+            Assert.Equal("3.0.1.0", stored.RequestedHonestFlowVersion);
+        }
 
         using var admin = factory.CreateClient();
         admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
@@ -417,6 +708,8 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         var request = requests.EnumerateArray().Single(x =>
             x.GetProperty("deviceId").GetString() == deviceId);
         Assert.Equal("Physical shop address", request.GetProperty("requestedAddress").GetString());
+        Assert.Equal("7701234567", request.GetProperty("clientInn").GetString());
+        Assert.Equal("3.0.1.0", request.GetProperty("honestFlowVersion").GetString());
     }
 
     [Fact]
@@ -440,6 +733,12 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
             license.GetProperty("security").GetRawText());
         var admin = operations.Single(x => x.Path == "/api/admin/clients" && x.Method == "get").Value;
         Assert.True(admin.GetProperty("security")[0].TryGetProperty("AdminKey", out _));
+        var registrationRequest = document.GetProperty("components").GetProperty("schemas")
+            .GetProperty("DeviceRegistrationRequestDto");
+        var version = registrationRequest.GetProperty("properties").GetProperty("honestFlowVersion");
+        Assert.True(version.GetProperty("nullable").GetBoolean());
+        Assert.False(registrationRequest.TryGetProperty("required", out var required) &&
+            required.EnumerateArray().Any(x => x.GetString() == "honestFlowVersion"));
     }
 
     private HttpClient AuthenticatedClient(string token)

@@ -43,6 +43,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         var client = new Client
         {
             ExternalClientId = "integration-client", Name = "Integration Client",
+            Inn = "7701234567",
             Architecture = "x64", IsActive = true, HasLmDatabaseBackup = true,
             CreatedAtUtc = now, UpdatedAtUtc = now
         };

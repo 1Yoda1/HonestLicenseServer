@@ -3,6 +3,7 @@ bin/
 obj/
 .vs/
 singlefile-publish/
+publish-linux/
 artifacts/
 *.user
 *.pdb

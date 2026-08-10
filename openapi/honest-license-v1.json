@@ -822,6 +822,35 @@
         ]
       }
     },
+    "/api/admin/support-requests/{id}/resolve": {
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "Admin_ResolveSupportRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          }
+        },
+        "security": [
+          {
+            "AdminKey": [ ]
+          }
+        ]
+      }
+    },
     "/api/assets/{component}/{version}/download": {
       "get": {
         "tags": [
@@ -2109,6 +2138,10 @@
           "address": {
             "type": "string",
             "nullable": true
+          },
+          "honestFlowVersion": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -2255,6 +2288,12 @@
           "chzToken": {
             "type": "string",
             "nullable": true
+          },
+          "ruDesktopEnabled": {
+            "type": "boolean"
+          },
+          "ruDesktopAutoOfferPasswordSetup": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

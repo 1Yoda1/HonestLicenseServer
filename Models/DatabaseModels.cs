@@ -130,6 +130,7 @@ public class DeviceRegistrationRequest
     public required string ExternalDeviceId { get; set; }
     public required string RequestedName { get; set; }
     public string? RequestedAddress { get; set; }
+    public string? RequestedHonestFlowVersion { get; set; }
     public required string Status { get; set; }
     public DateTime RequestedAtUtc { get; set; }
     public DateTime? ResolvedAtUtc { get; set; }

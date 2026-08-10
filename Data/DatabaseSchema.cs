@@ -108,6 +108,8 @@ public static class DatabaseSchema
                 "TEXT NULL", cancellationToken);
             await EnsureColumnAsync(connection, "DeviceRegistrationRequests", "RequestedAddress",
                 "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "DeviceRegistrationRequests", "RequestedHonestFlowVersion",
+                "TEXT NULL", cancellationToken);
         }
         finally
         {

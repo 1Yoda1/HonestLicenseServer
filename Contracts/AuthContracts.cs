@@ -21,7 +21,8 @@ public sealed record DeviceRegistrationRequestDto(
     [Required, StringLength(128, MinimumLength = 1)] string DeviceId,
     [Required, StringLength(200, MinimumLength = 1)] string Name,
     [Required, StringLength(300, MinimumLength = 1), RegularExpression(@".*\S.*")]
-    string Address);
+    string Address,
+    [StringLength(100)] string? HonestFlowVersion);
 
 public sealed record DeviceRegistrationResponse(int Id, string Status, DateTime RequestedAtUtc);
 
