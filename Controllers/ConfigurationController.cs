@@ -37,17 +37,25 @@ public sealed class ConfigurationController(HonestDbContext db) : ControllerBase
 
         var overrideByComponent = overrides.ToDictionary(x => x.Component,
             StringComparer.OrdinalIgnoreCase);
-        var assetByVersion = assets.ToDictionary(x => (x.Component.ToUpperInvariant(), x.Version), x => x);
+        var normalizedArchitecture = AssetsController.NormalizeArchitecture(client.Architecture);
         var components = globalVersions.Select(global =>
         {
             overrideByComponent.TryGetValue(global.Application, out var componentOverride);
             var overrideVersion = string.IsNullOrWhiteSpace(componentOverride?.RequiredVersion)
                 ? null : componentOverride.RequiredVersion;
             var effectiveVersion = overrideVersion ?? global.CurrentVersion;
-            assetByVersion.TryGetValue((global.Application.ToUpperInvariant(), effectiveVersion), out var asset);
+            var asset = assets.Where(x =>
+                    string.Equals(x.Component, global.Application, StringComparison.OrdinalIgnoreCase) &&
+                    x.Version == effectiveVersion &&
+                    (x.Architecture == normalizedArchitecture || x.Architecture == "any"))
+                .OrderBy(x => x.Architecture == normalizedArchitecture ? 0 : 1)
+                .FirstOrDefault();
+            var downloadUrl = asset is null ? null :
+                $"{Request.Scheme}://{Request.Host}/api/assets/" +
+                $"{Uri.EscapeDataString(asset.Component)}/{Uri.EscapeDataString(asset.Version)}/download";
             return new ComponentConfiguration(global.Application, global.CurrentVersion,
-                overrideVersion, effectiveVersion, asset?.FileName, asset?.DownloadUrl,
-                asset?.Sha256, asset?.SizeBytes, overrideVersion is not null);
+                overrideVersion, effectiveVersion, asset?.FileName, downloadUrl,
+                asset?.Sha256, asset?.SizeBytes, asset?.Architecture, overrideVersion is not null);
         }).ToList();
 
         var revisionCandidates = new List<DateTime> { client.UpdatedAtUtc, device.RegisteredAtUtc };

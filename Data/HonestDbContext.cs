@@ -29,7 +29,7 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
         b.Entity<License>().Property(x => x.SignatureScope).HasDefaultValue("LegacySnapshot");
         b.Entity<AppVersion>().HasIndex(x => x.Application).IsUnique();
         b.Entity<ClientComponentVersion>().HasIndex(x => new { x.ClientId, x.Component }).IsUnique();
-        b.Entity<ComponentAsset>().HasIndex(x => new { x.Component, x.Version }).IsUnique();
+        b.Entity<ComponentAsset>().HasIndex(x => new { x.Component, x.Version, x.Architecture }).IsUnique();
         b.Entity<ClientSetting>().HasKey(x => x.ClientId);
         b.Entity<LicensePolicy>().HasKey(x => x.ClientId);
         b.Entity<RefreshToken>().HasIndex(x => x.AccessTokenHash).IsUnique();

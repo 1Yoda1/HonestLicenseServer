@@ -6,6 +6,7 @@ using System.Text;
 using HonestLicenseServer.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
 namespace HonestLicenseServer.IntegrationTests;
@@ -90,7 +91,7 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    public async Task Empty_login_returns_validation_problem()
+    public async Task Empty_authentication_request_returns_validation_problem()
     {
         using var client = factory.CreateClient();
         var response = await client.PostAsJsonAsync("/api/auth/login", new { });
@@ -98,7 +99,8 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("validation_failed", json.GetProperty("code").GetString());
-        Assert.True(json.GetProperty("errors").TryGetProperty("Login", out _));
+        Assert.True(json.GetProperty("errors").TryGetProperty("Password", out _));
+        Assert.True(json.GetProperty("errors").TryGetProperty("DeviceId", out _));
     }
 
     [Fact]
@@ -133,7 +135,24 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal("2.6.2.0", component.GetProperty("globalVersion").GetString());
         Assert.Equal("2.5.0", component.GetProperty("effectiveVersion").GetString());
         Assert.Equal("HonestFlow-2.5.0.zip", component.GetProperty("fileName").GetString());
+        Assert.Equal("any", component.GetProperty("architecture").GetString());
+        Assert.EndsWith("/api/assets/HonestFlow/2.5.0/download",
+            component.GetProperty("downloadUrl").GetString());
         Assert.True(component.GetProperty("isOverride").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Asset_download_redirects_active_device_to_configured_source()
+    {
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", ApiFactory.ActiveAccessToken);
+        var response = await client.GetAsync("/api/assets/HonestFlow/2.5.0/download");
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("https://example.test/override", response.Headers.Location?.ToString());
     }
 
     [Fact]
@@ -271,8 +290,7 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         using var client = factory.CreateClient();
         var login = await client.PostAsJsonAsync("/api/auth/login", new
         {
-            login = "integration-login", password = "integration-password",
-            deviceId = "integration-device", deviceName = "Test Device"
+            password = "integration-password", deviceId = "integration-device"
         });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         var loginTokens = await login.Content.ReadFromJsonAsync<JsonElement>();
@@ -349,10 +367,50 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         using var loginClient = factory.CreateClient();
         var login = await loginClient.PostAsJsonAsync("/api/auth/login", new
         {
-            login = "integration-login", password = "integration-password",
-            deviceId = "integration-device", deviceName = "Test Device"
+            password = "integration-password", deviceId = "integration-device"
         });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+    }
+
+    [Fact]
+    public async Task Unknown_device_requires_explicit_registration_request_with_physical_address()
+    {
+        const string deviceId = "new-address-required-device";
+        using var client = factory.CreateClient();
+        var login = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            password = "integration-password", deviceId
+        });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var tokens = await login.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(tokens.GetProperty("deviceRegistrationRequired").GetBoolean());
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            Assert.False(await db.DeviceRegistrationRequests.AnyAsync(x => x.ExternalDeviceId == deviceId));
+        }
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", tokens.GetProperty("accessToken").GetString());
+        var missingAddress = await client.PostAsJsonAsync("/api/device/request", new
+        {
+            deviceId, name = "New shop computer"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, missingAddress.StatusCode);
+
+        var registration = await client.PostAsJsonAsync("/api/device/request", new
+        {
+            deviceId, name = "New shop computer", address = "Physical shop address"
+        });
+        Assert.Equal(HttpStatusCode.Accepted, registration.StatusCode);
+
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        var requests = await admin.GetFromJsonAsync<JsonElement>("/api/admin/device-requests");
+        var request = requests.EnumerateArray().Single(x =>
+            x.GetProperty("deviceId").GetString() == deviceId);
+        Assert.Equal("Physical shop address", request.GetProperty("requestedAddress").GetString());
     }
 
     [Fact]

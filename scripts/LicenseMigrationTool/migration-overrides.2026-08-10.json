@@ -1,0 +1,14 @@
+{
+  "IncludeApiDevices": [
+    {
+      "ClientId": "0fdbcf34-6d28-46a7-bef7-65f32506e22c",
+      "DeviceId": "827bb809-7665-42f6-9ef7-cc52617ad8e1",
+      "Reason": "DESKTOP-O92P6LR explicitly confirmed by the operator"
+    },
+    {
+      "ClientId": "5b818f3d-0131-457d-9905-31b74be91d77",
+      "DeviceId": "cc2de7fa-48c5-4609-9203-3bf2d952a25d",
+      "Reason": "DESKTOP-4GBH9SK explicitly confirmed by the operator"
+    }
+  ]
+}

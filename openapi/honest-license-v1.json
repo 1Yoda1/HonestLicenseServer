@@ -534,6 +534,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "architecture",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -811,6 +818,82 @@
         "security": [
           {
             "AdminKey": [ ]
+          }
+        ]
+      }
+    },
+    "/api/assets/{component}/{version}/download": {
+      "get": {
+        "tags": [
+          "Assets"
+        ],
+        "operationId": "Assets_Download",
+        "parameters": [
+          {
+            "name": "component",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Found"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Bearer": [ ]
           }
         ]
       }
@@ -1797,6 +1880,10 @@
             "format": "int64",
             "nullable": true
           },
+          "architecture": {
+            "type": "string",
+            "nullable": true
+          },
           "isOverride": {
             "type": "boolean"
           }
@@ -2018,6 +2105,10 @@
           "name": {
             "type": "string",
             "nullable": true
+          },
+          "address": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -2098,19 +2189,11 @@
       "LoginRequest": {
         "type": "object",
         "properties": {
-          "login": {
-            "type": "string",
-            "nullable": true
-          },
           "password": {
             "type": "string",
             "nullable": true
           },
           "deviceId": {
-            "type": "string",
-            "nullable": true
-          },
-          "deviceName": {
             "type": "string",
             "nullable": true
           }
@@ -2183,7 +2266,19 @@
             "type": "string",
             "nullable": true
           },
+          "architecture": {
+            "type": "string",
+            "nullable": true
+          },
           "downloadUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "yandexPublicKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "yandexPath": {
             "type": "string",
             "nullable": true
           },
@@ -2406,6 +2501,9 @@
   "tags": [
     {
       "name": "Admin"
+    },
+    {
+      "name": "Assets"
     },
     {
       "name": "Auth"

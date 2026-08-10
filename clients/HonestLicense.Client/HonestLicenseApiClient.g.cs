@@ -166,12 +166,12 @@ namespace HonestLicense.Client
 
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        System.Threading.Tasks.Task Admin_AssetsAsync(string? component);
+        System.Threading.Tasks.Task Admin_AssetsAsync(string? component, string? architecture);
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        System.Threading.Tasks.Task Admin_AssetsAsync(string? component, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.Task Admin_AssetsAsync(string? component, string? architecture, System.Threading.CancellationToken cancellationToken);
 
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
@@ -235,6 +235,13 @@ namespace HonestLicense.Client
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
         System.Threading.Tasks.Task Admin_SupportRequestsAsync(string? status, System.Threading.CancellationToken cancellationToken);
+
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        System.Threading.Tasks.Task Assets_DownloadAsync(string component, string version);
+
+        /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        System.Threading.Tasks.Task Assets_DownloadAsync(string component, string version, System.Threading.CancellationToken cancellationToken);
 
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
@@ -1538,15 +1545,15 @@ namespace HonestLicense.Client
 
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        public virtual System.Threading.Tasks.Task Admin_AssetsAsync(string? component)
+        public virtual System.Threading.Tasks.Task Admin_AssetsAsync(string? component, string? architecture)
         {
-            return Admin_AssetsAsync(component, System.Threading.CancellationToken.None);
+            return Admin_AssetsAsync(component, architecture, System.Threading.CancellationToken.None);
         }
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        public virtual async System.Threading.Tasks.Task Admin_AssetsAsync(string? component, System.Threading.CancellationToken cancellationToken)
+        public virtual async System.Threading.Tasks.Task Admin_AssetsAsync(string? component, string? architecture, System.Threading.CancellationToken cancellationToken)
         {
             var client_ = _httpClient;
             var disposeClient_ = false;
@@ -1564,6 +1571,10 @@ namespace HonestLicense.Client
                     if (component != null)
                     {
                         urlBuilder_.Append(System.Uri.EscapeDataString("component")).Append('=').Append(System.Uri.EscapeDataString(ConvertToString(component, System.Globalization.CultureInfo.InvariantCulture))).Append('&');
+                    }
+                    if (architecture != null)
+                    {
+                        urlBuilder_.Append(System.Uri.EscapeDataString("architecture")).Append('=').Append(System.Uri.EscapeDataString(ConvertToString(architecture, System.Globalization.CultureInfo.InvariantCulture))).Append('&');
                     }
                     urlBuilder_.Length--;
 
@@ -2153,6 +2164,114 @@ namespace HonestLicense.Client
                         var status_ = (int)response_.StatusCode;
                         if (status_ == 200)
                         {
+                            return;
+                        }
+                        else
+                        {
+                            var responseData_ = response_.Content == null ? null : await ReadAsStringAsync(response_.Content, cancellationToken).ConfigureAwait(false);
+                            throw new ApiException("The HTTP status code of the response was not expected (" + status_ + ").", status_, responseData_, headers_, null);
+                        }
+                    }
+                    finally
+                    {
+                        if (disposeResponse_)
+                            response_.Dispose();
+                    }
+                }
+            }
+            finally
+            {
+                if (disposeClient_)
+                    client_.Dispose();
+            }
+        }
+
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        public virtual System.Threading.Tasks.Task Assets_DownloadAsync(string component, string version)
+        {
+            return Assets_DownloadAsync(component, version, System.Threading.CancellationToken.None);
+        }
+
+        /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        public virtual async System.Threading.Tasks.Task Assets_DownloadAsync(string component, string version, System.Threading.CancellationToken cancellationToken)
+        {
+            if (component == null)
+                throw new System.ArgumentNullException("component");
+
+            if (version == null)
+                throw new System.ArgumentNullException("version");
+
+            var client_ = _httpClient;
+            var disposeClient_ = false;
+            try
+            {
+                using (var request_ = new System.Net.Http.HttpRequestMessage())
+                {
+                    request_.Method = new System.Net.Http.HttpMethod("GET");
+
+                    var urlBuilder_ = new System.Text.StringBuilder();
+                    if (!string.IsNullOrEmpty(_baseUrl)) urlBuilder_.Append(_baseUrl);
+                    // Operation Path: "api/assets/{component}/{version}/download"
+                    urlBuilder_.Append("api/assets/");
+                    urlBuilder_.Append(System.Uri.EscapeDataString(ConvertToString(component, System.Globalization.CultureInfo.InvariantCulture)));
+                    urlBuilder_.Append('/');
+                    urlBuilder_.Append(System.Uri.EscapeDataString(ConvertToString(version, System.Globalization.CultureInfo.InvariantCulture)));
+                    urlBuilder_.Append("/download");
+
+                    PrepareRequest(client_, request_, urlBuilder_);
+
+                    var url_ = urlBuilder_.ToString();
+                    request_.RequestUri = new System.Uri(url_, System.UriKind.RelativeOrAbsolute);
+
+                    PrepareRequest(client_, request_, url_);
+
+                    var response_ = await client_.SendAsync(request_, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                    var disposeResponse_ = true;
+                    try
+                    {
+                        var headers_ = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IEnumerable<string>>();
+                        foreach (var item_ in response_.Headers)
+                            headers_[item_.Key] = item_.Value;
+                        if (response_.Content != null && response_.Content.Headers != null)
+                        {
+                            foreach (var item_ in response_.Content.Headers)
+                                headers_[item_.Key] = item_.Value;
+                        }
+
+                        ProcessResponse(client_, response_);
+
+                        var status_ = (int)response_.StatusCode;
+                        if (status_ == 302)
+                        {
+                            string responseText_ = ( response_.Content == null ) ? string.Empty : await ReadAsStringAsync(response_.Content, cancellationToken).ConfigureAwait(false);
+                            throw new ApiException("Found", status_, responseText_, headers_, null);
+                        }
+                        else
+                        if (status_ == 404)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ProblemDetails>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ProblemDetails>("Not Found", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        if (status_ == 502)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ProblemDetails>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ProblemDetails>("Bad Gateway", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+
+                        if (status_ == 200 || status_ == 204)
+                        {
+
                             return;
                         }
                         else
@@ -3413,6 +3532,9 @@ namespace HonestLicense.Client
         [System.Text.Json.Serialization.JsonPropertyName("sizeBytes")]
         public long? SizeBytes { get; set; }
 
+        [System.Text.Json.Serialization.JsonPropertyName("architecture")]
+        public string? Architecture { get; set; }
+
         [System.Text.Json.Serialization.JsonPropertyName("isOverride")]
         public bool IsOverride { get; set; }
 
@@ -3596,6 +3718,9 @@ namespace HonestLicense.Client
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string? Name { get; set; }
 
+        [System.Text.Json.Serialization.JsonPropertyName("address")]
+        public string? Address { get; set; }
+
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -3662,17 +3787,11 @@ namespace HonestLicense.Client
     public partial class LoginRequest
     {
 
-        [System.Text.Json.Serialization.JsonPropertyName("login")]
-        public string? Login { get; set; }
-
         [System.Text.Json.Serialization.JsonPropertyName("password")]
         public string? Password { get; set; }
 
         [System.Text.Json.Serialization.JsonPropertyName("deviceId")]
         public string? DeviceId { get; set; }
-
-        [System.Text.Json.Serialization.JsonPropertyName("deviceName")]
-        public string? DeviceName { get; set; }
 
     }
 
@@ -3740,8 +3859,17 @@ namespace HonestLicense.Client
         [System.Text.Json.Serialization.JsonPropertyName("fileName")]
         public string? FileName { get; set; }
 
+        [System.Text.Json.Serialization.JsonPropertyName("architecture")]
+        public string? Architecture { get; set; }
+
         [System.Text.Json.Serialization.JsonPropertyName("downloadUrl")]
         public string? DownloadUrl { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("yandexPublicKey")]
+        public string? YandexPublicKey { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("yandexPath")]
+        public string? YandexPath { get; set; }
 
         [System.Text.Json.Serialization.JsonPropertyName("sha256")]
         public string? Sha256 { get; set; }

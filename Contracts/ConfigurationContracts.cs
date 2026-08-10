@@ -37,11 +37,14 @@ public sealed record LicensePolicyConfiguration(
 public sealed record ComponentConfiguration(
     string Component, string GlobalVersion, string? OverrideVersion,
     string EffectiveVersion, string? FileName, string? DownloadUrl,
-    string? Sha256, long? SizeBytes, bool IsOverride);
+    string? Sha256, long? SizeBytes, string? Architecture, bool IsOverride);
 
 public sealed record PutComponentAssetRequest(
     [Required, StringLength(260, MinimumLength = 1)] string FileName,
-    [Required, Url, StringLength(2048)] string DownloadUrl,
+    [StringLength(20)] string? Architecture,
+    [Url, StringLength(2048)] string? DownloadUrl,
+    [Url, StringLength(2048)] string? YandexPublicKey,
+    [StringLength(1000)] string? YandexPath,
     [RegularExpression("^[A-Fa-f0-9]{64}$")] string? Sha256,
     [Range(0, long.MaxValue)] long? SizeBytes);
 

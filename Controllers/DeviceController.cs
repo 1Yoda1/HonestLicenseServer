@@ -70,6 +70,7 @@ public class DeviceController(HonestDbContext db) : ControllerBase
                 return Ok(new DeviceRegistrationResponse(existing.Id, existing.Status, existing.RequestedAtUtc));
             pending = new DeviceRegistrationRequest { ClientId = clientId,
                 ExternalDeviceId = request.DeviceId, RequestedName = request.Name,
+                RequestedAddress = request.Address.Trim(),
                 Status = "Pending", RequestedAtUtc = DateTime.UtcNow };
             db.DeviceRegistrationRequests.Add(pending);
             await db.SaveChangesAsync();

@@ -1,5 +1,7 @@
 # HonestLicenseServer
 
+Полная русскоязычная документация API: [`docs/API-RU.md`](docs/API-RU.md).
+
 Согласованные границы системы и решения перед интеграцией клиентов описаны в
 [`docs/architecture-decisions.md`](docs/architecture-decisions.md).
 
@@ -38,6 +40,30 @@ POST /api/device/request
 GET  /api/license/current
 GET  /api/version/current/{application}
 ```
+
+Тело `POST /api/auth/login` не содержит отдельного логина:
+
+```json
+{
+  "password": "HF-...",
+  "deviceId": "installation-guid"
+}
+```
+
+Если устройство неизвестно, сервер возвращает ограниченную сессию с
+`deviceRegistrationRequired: true`, но не создаёт заявку автоматически.
+HonestFlow должен явно запросить физический адрес торговой точки и отправить:
+
+```json
+{
+  "deviceId": "installation-guid",
+  "name": "Касса 1",
+  "address": "Омск, ул. Примерная, 10"
+}
+```
+
+в `POST /api/device/request`. Поле `address` обязательное и означает физический
+адрес торговой точки, а не IP-адрес.
 
 Access token живёт 15 минут, refresh token — 30 дней. В базе хранятся только хеши токенов. Refresh token ротируется при каждом обновлении; logout отзывает текущую сессию.
 

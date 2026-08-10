@@ -86,8 +86,11 @@ public class ComponentAsset
     public int Id { get; set; }
     public required string Component { get; set; }
     public required string Version { get; set; }
+    public required string Architecture { get; set; }
     public required string FileName { get; set; }
-    public required string DownloadUrl { get; set; }
+    public string? DownloadUrl { get; set; }
+    public string? YandexPublicKey { get; set; }
+    public string? YandexPath { get; set; }
     public string? Sha256 { get; set; }
     public long? SizeBytes { get; set; }
     public DateTime UpdatedAtUtc { get; set; }
@@ -126,6 +129,7 @@ public class DeviceRegistrationRequest
     public int ClientId { get; set; }
     public required string ExternalDeviceId { get; set; }
     public required string RequestedName { get; set; }
+    public string? RequestedAddress { get; set; }
     public required string Status { get; set; }
     public DateTime RequestedAtUtc { get; set; }
     public DateTime? ResolvedAtUtc { get; set; }

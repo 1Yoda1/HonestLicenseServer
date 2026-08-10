@@ -108,6 +108,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 });
 builder.Services.AddSingleton<LoginAttemptLimiter>();
 builder.Services.AddSingleton<LicenseSignatureVerifier>();
+builder.Services.AddHttpClient<IYandexPublicDownloadResolver, YandexPublicDownloadResolver>(client =>
+    client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddAuthentication(OpaqueBearerDefaults.Scheme)
     .AddScheme<AuthenticationSchemeOptions, OpaqueBearerHandler>(
         OpaqueBearerDefaults.Scheme, _ => { });

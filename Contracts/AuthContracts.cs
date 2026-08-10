@@ -3,10 +3,8 @@ using System.ComponentModel.DataAnnotations;
 namespace HonestLicenseServer.Contracts;
 
 public sealed record LoginRequest(
-    [Required, StringLength(128, MinimumLength = 1)] string Login,
     [Required, StringLength(256, MinimumLength = 1)] string Password,
-    [Required, StringLength(128, MinimumLength = 1)] string DeviceId,
-    [StringLength(200)] string? DeviceName = null);
+    [Required, StringLength(128, MinimumLength = 1)] string DeviceId);
 
 public sealed record RefreshRequest(
     [Required, StringLength(512, MinimumLength = 1)] string RefreshToken);
@@ -19,7 +17,9 @@ public sealed record TokenResponse(
 
 public sealed record DeviceRegistrationRequestDto(
     [Required, StringLength(128, MinimumLength = 1)] string DeviceId,
-    [Required, StringLength(200, MinimumLength = 1)] string Name);
+    [Required, StringLength(200, MinimumLength = 1)] string Name,
+    [Required, StringLength(300, MinimumLength = 1), RegularExpression(@".*\S.*")]
+    string Address);
 
 public sealed record DeviceRegistrationResponse(int Id, string Status, DateTime RequestedAtUtc);
 

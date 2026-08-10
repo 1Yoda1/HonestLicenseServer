@@ -225,7 +225,8 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status);
         return Ok(await query.OrderBy(x => x.RequestedAtUtc).Select(x => new
         { x.Id, clientId = x.Client.ExternalClientId, clientName = x.Client.Name,
-          deviceId = x.ExternalDeviceId, x.RequestedName, x.Status, x.RequestedAtUtc, x.ResolvedAtUtc, x.Comment }).ToListAsync());
+          deviceId = x.ExternalDeviceId, x.RequestedName, x.RequestedAddress,
+          x.Status, x.RequestedAtUtc, x.ResolvedAtUtc, x.Comment }).ToListAsync());
     }
 
     [HttpPut("device-requests/{id:int}/approve")]
@@ -239,7 +240,8 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (device is null)
         {
             device = new Device { ClientId = pending.ClientId, ExternalDeviceId = pending.ExternalDeviceId,
-                Name = request.Name ?? pending.RequestedName, Address = request.Address,
+                Name = request.Name ?? pending.RequestedName,
+                Address = request.Address ?? pending.RequestedAddress,
                 Comment = request.Comment, Status = "Active", RegisteredAtUtc = DateTime.UtcNow };
             db.Devices.Add(device); await db.SaveChangesAsync();
         }
@@ -264,14 +266,22 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
     }
 
     [HttpGet("assets")]
-    public async Task<IActionResult> Assets([FromQuery] string? component = null)
+    public async Task<IActionResult> Assets([FromQuery] string? component = null,
+        [FromQuery] string? architecture = null)
     {
         if (!IsAdmin()) return AdminUnauthorized();
         var query = db.ComponentAssets.AsNoTracking().AsQueryable();
         if (!string.IsNullOrWhiteSpace(component))
             query = query.Where(x => x.Component == component);
+        if (!string.IsNullOrWhiteSpace(architecture))
+        {
+            var normalized = AssetsController.NormalizeArchitecture(architecture);
+            query = query.Where(x => x.Architecture == normalized);
+        }
         return Ok(await query.OrderBy(x => x.Component).ThenByDescending(x => x.Version)
-            .Select(x => new { x.Component, x.Version, x.FileName, x.DownloadUrl,
+            .ThenBy(x => x.Architecture)
+            .Select(x => new { x.Component, x.Version, x.Architecture, x.FileName,
+                x.DownloadUrl, x.YandexPublicKey, x.YandexPath,
                 x.Sha256, x.SizeBytes, x.UpdatedAtUtc }).ToListAsync());
     }
 
@@ -280,12 +290,24 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         PutComponentAssetRequest request)
     {
         if (!IsAdmin()) return AdminUnauthorized();
+        var architecture = AssetsController.NormalizeArchitecture(request.Architecture);
+        var hasDirectUrl = !string.IsNullOrWhiteSpace(request.DownloadUrl);
+        var hasYandex = !string.IsNullOrWhiteSpace(request.YandexPublicKey) &&
+            !string.IsNullOrWhiteSpace(request.YandexPath);
+        if (!hasDirectUrl && !hasYandex)
+            return BadRequest(new { error = "asset_download_source_required" });
+        if ((!string.IsNullOrWhiteSpace(request.YandexPublicKey) ||
+             !string.IsNullOrWhiteSpace(request.YandexPath)) && !hasYandex)
+            return BadRequest(new { error = "incomplete_yandex_asset_source" });
         var asset = await db.ComponentAssets.SingleOrDefaultAsync(x =>
-            x.Component == component && x.Version == version);
+            x.Component == component && x.Version == version && x.Architecture == architecture);
         if (asset is null)
         {
             asset = new ComponentAsset { Component = component, Version = version,
-                FileName = request.FileName, DownloadUrl = request.DownloadUrl,
+                Architecture = architecture, FileName = request.FileName,
+                DownloadUrl = Clean(request.DownloadUrl),
+                YandexPublicKey = Clean(request.YandexPublicKey),
+                YandexPath = Clean(request.YandexPath),
                 Sha256 = request.Sha256?.ToLowerInvariant(), SizeBytes = request.SizeBytes,
                 UpdatedAtUtc = DateTime.UtcNow };
             db.ComponentAssets.Add(asset);
@@ -293,13 +315,15 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         else
         {
             asset.FileName = request.FileName;
-            asset.DownloadUrl = request.DownloadUrl;
+            asset.DownloadUrl = Clean(request.DownloadUrl);
+            asset.YandexPublicKey = Clean(request.YandexPublicKey);
+            asset.YandexPath = Clean(request.YandexPath);
             asset.Sha256 = request.Sha256?.ToLowerInvariant();
             asset.SizeBytes = request.SizeBytes;
             asset.UpdatedAtUtc = DateTime.UtcNow;
         }
         AddAudit("Asset.Updated", "ComponentAsset", $"{component}:{version}", null,
-            new { component, version, request.FileName });
+            new { component, version, architecture, request.FileName });
         await db.SaveChangesAsync();
         return NoContent();
     }
@@ -456,6 +480,9 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
             ChzToken = string.IsNullOrWhiteSpace(chzToken) ? null : chzToken.Trim()
         };
     }
+
+    private static string? Clean(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
 public record CreateClientRequest(string ClientId, string Name, string Login, string Password,

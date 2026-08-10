@@ -76,12 +76,14 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             new ComponentAsset
             {
                 Component = "HonestFlow", Version = "2.6.2.0",
+                Architecture = "any",
                 FileName = "HonestFlow-2.6.2.0.zip", DownloadUrl = "https://example.test/global",
                 Sha256 = new string('a', 64), SizeBytes = 100, UpdatedAtUtc = now
             },
             new ComponentAsset
             {
                 Component = "HonestFlow", Version = "2.5.0",
+                Architecture = "any",
                 FileName = "HonestFlow-2.5.0.zip", DownloadUrl = "https://example.test/override",
                 Sha256 = new string('b', 64), SizeBytes = 90, UpdatedAtUtc = now
             });
@@ -140,6 +142,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         string name, DateTime now) => new()
     {
         ClientId = clientId, ExternalDeviceId = deviceId, RequestedName = name,
+        RequestedAddress = "Test physical address",
         Status = "Pending", RequestedAtUtc = now
     };
 }

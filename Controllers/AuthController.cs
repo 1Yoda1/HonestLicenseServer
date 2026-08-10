@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace HonestLicenseServer.Controllers;
 
@@ -23,12 +25,16 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<TokenResponse>> Login(LoginRequest request)
     {
-        if (!loginLimiter.TryAcquire(request.Login, DateTime.UtcNow))
+        var attemptKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.Password)));
+        if (!loginLimiter.TryAcquire(attemptKey, DateTime.UtcNow))
             return ApiProblems.Create(HttpContext, StatusCodes.Status429TooManyRequests,
                 "rate_limit_exceeded", "Too many requests", "Try again later.");
 
-        var credential = await db.Credentials.Include(x => x.Client)
-            .SingleOrDefaultAsync(x => x.Login == request.Login && x.IsActive);
+        var credentials = await db.Credentials.Include(x => x.Client).ThenInclude(x => x.Settings)
+            .Where(x => x.IsActive && x.Client.Settings != null &&
+                x.Client.Settings.IdentificationCode == request.Password)
+            .ToListAsync();
+        var credential = credentials.Count == 1 ? credentials[0] : null;
         if (credential is null || !PasswordHasher.Verify(request.Password, credential.PasswordHash))
             return ApiProblems.Create(HttpContext, StatusCodes.Status401Unauthorized,
                 "invalid_credentials", "Invalid credentials");
@@ -36,24 +42,13 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
             return ApiProblems.Create(HttpContext, StatusCodes.Status403Forbidden,
                 "client_disabled", "Client is disabled");
 
-        loginLimiter.Reset(request.Login);
+        loginLimiter.Reset(attemptKey);
 
         var device = await db.Devices.SingleOrDefaultAsync(x =>
             x.ClientId == credential.ClientId && x.ExternalDeviceId == request.DeviceId);
         if (device?.Status == "Disabled" || device?.Status == "Deleted")
             return ApiProblems.Create(HttpContext, StatusCodes.Status403Forbidden,
                 "device_disabled", "Device is disabled");
-
-        if (device is null && !await db.DeviceRegistrationRequests.AnyAsync(x =>
-            x.ClientId == credential.ClientId && x.ExternalDeviceId == request.DeviceId))
-        {
-            db.DeviceRegistrationRequests.Add(new DeviceRegistrationRequest
-            {
-                ClientId = credential.ClientId, ExternalDeviceId = request.DeviceId,
-                RequestedName = request.DeviceName ?? request.DeviceId,
-                Status = "Pending", RequestedAtUtc = DateTime.UtcNow
-            });
-        }
 
         var pair = CreateSession(credential.ClientId, device?.Id, request.DeviceId, null);
         await db.SaveChangesAsync();
