@@ -13,6 +13,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     public const string ActiveAccessToken = "integration-active-access";
     public const string PendingAccessToken = "integration-pending-access";
+    public const string ApproveAccessToken = "integration-approve-access";
+    public const string RejectAccessToken = "integration-reject-access";
     public const string AdminKey = "integration-admin-key";
     private readonly string _directory = Path.Combine(Path.GetTempPath(), $"honest-api-tests-{Guid.NewGuid():N}");
     private string? _originalConnectionString;
@@ -52,6 +54,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         db.AddRange(client, device);
         await db.SaveChangesAsync();
 
+        db.Credentials.Add(new Credential
+        {
+            ClientId = client.Id, Login = "integration-login",
+            PasswordHash = PasswordHasher.Hash("integration-password"),
+            IsActive = true, PasswordChangedAtUtc = now
+        });
+
         db.AppVersions.Add(new AppVersion
         {
             Application = "HonestFlow", CurrentVersion = "2.6.2.0", ImportedAtUtc = now
@@ -75,12 +84,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         });
         db.RefreshTokens.AddRange(
             Session(client.Id, device.Id, device.ExternalDeviceId, ActiveAccessToken, now),
-            Session(client.Id, null, "pending-device", PendingAccessToken, now));
-        db.DeviceRegistrationRequests.Add(new DeviceRegistrationRequest
-        {
-            ClientId = client.Id, ExternalDeviceId = "pending-device", RequestedName = "Pending Device",
-            Status = "Pending", RequestedAtUtc = now
-        });
+            Session(client.Id, null, "pending-device", PendingAccessToken, now),
+            Session(client.Id, null, "approve-device", ApproveAccessToken, now),
+            Session(client.Id, null, "reject-device", RejectAccessToken, now));
+        db.DeviceRegistrationRequests.AddRange(
+            Registration(client.Id, "pending-device", "Pending Device", now),
+            Registration(client.Id, "approve-device", "Approve Device", now),
+            Registration(client.Id, "reject-device", "Reject Device", now));
         await db.SaveChangesAsync();
     }
 
@@ -115,5 +125,12 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         AccessTokenHash = TokenHelper.Hash(accessToken), AccessTokenExpiresAtUtc = now.AddHours(1),
         TokenHash = TokenHelper.Hash($"refresh-{accessToken}"), TokenFamilyId = Guid.NewGuid().ToString(),
         CreatedAtUtc = now, ExpiresAtUtc = now.AddDays(1)
+    };
+
+    private static DeviceRegistrationRequest Registration(int clientId, string deviceId,
+        string name, DateTime now) => new()
+    {
+        ClientId = clientId, ExternalDeviceId = deviceId, RequestedName = name,
+        Status = "Pending", RequestedAtUtc = now
     };
 }

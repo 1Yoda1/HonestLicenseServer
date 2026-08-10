@@ -59,6 +59,12 @@ builder.Services.AddControllers(options => options.Filters.Add<ApiErrorResultFil
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
+    options.CustomOperationIds(api =>
+    {
+        var controller = api.ActionDescriptor.RouteValues["controller"];
+        var action = api.ActionDescriptor.RouteValues["action"];
+        return $"{controller}_{action}";
+    });
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Type = SecuritySchemeType.Http,
@@ -66,10 +72,14 @@ builder.Services.AddSwaggerGen(options =>
         BearerFormat = "opaque",
         Description = "Access token returned by POST /api/auth/login or /api/auth/refresh."
     });
-    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    options.AddSecurityDefinition("AdminKey", new OpenApiSecurityScheme
     {
-        [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+        Type = SecuritySchemeType.ApiKey,
+        Name = "X-Admin-Key",
+        In = ParameterLocation.Header,
+        Description = "Administrative API key used by HonestDesk."
     });
+    options.OperationFilter<OpenApiSecurityOperationFilter>();
 });
 builder.Services.AddDbContext<HonestDbContext>(options =>
     options.UseSqlite(connectionStringBuilder.ConnectionString));

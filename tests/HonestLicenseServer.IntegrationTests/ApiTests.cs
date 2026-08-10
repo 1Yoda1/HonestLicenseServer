@@ -191,6 +191,89 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal("invalid_admin_key", json.GetProperty("code").GetString());
     }
 
+    [Fact]
+    public async Task Login_refresh_rotation_and_logout_work_end_to_end()
+    {
+        using var client = factory.CreateClient();
+        var login = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            login = "integration-login", password = "integration-password",
+            deviceId = "integration-device", deviceName = "Test Device"
+        });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var loginTokens = await login.Content.ReadFromJsonAsync<JsonElement>();
+        var accessToken = loginTokens.GetProperty("accessToken").GetString()!;
+        var refreshToken = loginTokens.GetProperty("refreshToken").GetString()!;
+        Assert.False(loginTokens.GetProperty("deviceRegistrationRequired").GetBoolean());
+
+        var refresh = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
+        Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+        var refreshedTokens = await refresh.Content.ReadFromJsonAsync<JsonElement>();
+        var refreshedAccess = refreshedTokens.GetProperty("accessToken").GetString()!;
+        var reused = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
+        Assert.Equal(HttpStatusCode.Unauthorized, reused.StatusCode);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", refreshedAccess);
+        var logout = await client.PostAsync("/api/auth/logout", null);
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        var afterLogout = await client.GetAsync("/api/configuration/current");
+        Assert.Equal(HttpStatusCode.Unauthorized, afterLogout.StatusCode);
+
+        Assert.NotEqual(accessToken, refreshedAccess);
+    }
+
+    [Fact]
+    public async Task Admin_can_approve_and_reject_device_requests()
+    {
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        var requests = await admin.GetFromJsonAsync<JsonElement>("/api/admin/device-requests");
+        var approveId = requests.EnumerateArray().Single(x =>
+            x.GetProperty("deviceId").GetString() == "approve-device").GetProperty("id").GetInt32();
+        var rejectId = requests.EnumerateArray().Single(x =>
+            x.GetProperty("deviceId").GetString() == "reject-device").GetProperty("id").GetInt32();
+
+        var approve = await admin.PutAsJsonAsync($"/api/admin/device-requests/{approveId}/approve",
+            new { name = "Approved Device", address = "Approved address", comment = "ok" });
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+        using var approvedDevice = AuthenticatedClient(ApiFactory.ApproveAccessToken);
+        Assert.Equal(HttpStatusCode.OK,
+            (await approvedDevice.GetAsync("/api/configuration/current")).StatusCode);
+
+        var reject = await admin.PutAsJsonAsync($"/api/admin/device-requests/{rejectId}/reject",
+            new { comment = "not allowed" });
+        Assert.Equal(HttpStatusCode.NoContent, reject.StatusCode);
+        using var rejectedDevice = AuthenticatedClient(ApiFactory.RejectAccessToken);
+        var rejectedStatus = await rejectedDevice.GetFromJsonAsync<JsonElement>(
+            "/api/device/registration/current");
+        Assert.Equal("Rejected", rejectedStatus.GetProperty("status").GetString());
+        Assert.Equal(HttpStatusCode.Forbidden,
+            (await rejectedDevice.GetAsync("/api/configuration/current")).StatusCode);
+    }
+
+    [Fact]
+    public async Task OpenApi_has_unique_operation_ids_and_correct_security_schemes()
+    {
+        using var client = factory.CreateClient();
+        var document = await client.GetFromJsonAsync<JsonElement>("/swagger/v1/swagger.json");
+        var operations = document.GetProperty("paths").EnumerateObject()
+            .SelectMany(path => path.Value.EnumerateObject()
+                .Where(operation => operation.Name is "get" or "post" or "put" or "delete")
+                .Select(operation => (Path: path.Name, Method: operation.Name, Value: operation.Value)))
+            .ToList();
+        var operationIds = operations.Select(x => x.Value.GetProperty("operationId").GetString()!).ToList();
+        Assert.DoesNotContain(operationIds, string.IsNullOrWhiteSpace);
+        Assert.Equal(operationIds.Count, operationIds.Distinct(StringComparer.Ordinal).Count());
+
+        var login = operations.Single(x => x.Path == "/api/auth/login").Value;
+        Assert.Empty(login.GetProperty("security").EnumerateArray());
+        var license = operations.Single(x => x.Path == "/api/license/current").Value;
+        Assert.True(license.GetProperty("security")[0].TryGetProperty("Bearer", out _),
+            license.GetProperty("security").GetRawText());
+        var admin = operations.Single(x => x.Path == "/api/admin/clients" && x.Method == "get").Value;
+        Assert.True(admin.GetProperty("security")[0].TryGetProperty("AdminKey", out _));
+    }
+
     private HttpClient AuthenticatedClient(string token)
     {
         var client = factory.CreateClient();

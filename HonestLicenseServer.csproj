@@ -21,8 +21,11 @@
 
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="clients\**\*.cs" />
     <Content Remove="tests\**\*" />
+    <Content Remove="clients\**\*" />
     <None Remove="tests\**\*" />
+    <None Remove="clients\**\*" />
   </ItemGroup>
 
 </Project>
