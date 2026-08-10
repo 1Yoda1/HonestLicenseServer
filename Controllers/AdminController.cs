@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using HonestLicenseServer.Data;
 using HonestLicenseServer.Contracts;
+using HonestLicenseServer.Infrastructure;
 using HonestLicenseServer.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,8 @@ namespace HonestLicenseServer.Controllers;
 
 [ApiController]
 [Route("api/admin")]
-public class AdminController(HonestDbContext db, IConfiguration configuration) : ControllerBase
+public class AdminController(HonestDbContext db, IConfiguration configuration,
+    LicenseSignatureVerifier signatureVerifier) : ControllerBase
 {
     [HttpGet("clients")]
     public async Task<IActionResult> Clients()
@@ -148,14 +150,34 @@ public class AdminController(HonestDbContext db, IConfiguration configuration) :
     public async Task<IActionResult> PublishLicense(PublishLicenseRequest request)
     {
         if (!IsAdmin()) return AdminUnauthorized();
+        byte[] grantBytes;
         string grantJson;
-        try { grantJson = Encoding.UTF8.GetString(Convert.FromBase64String(request.GrantBase64)); }
+        try
+        {
+            grantBytes = Convert.FromBase64String(request.GrantBase64);
+            grantJson = new UTF8Encoding(false, true).GetString(grantBytes);
+        }
         catch (FormatException) { return BadRequest(new { error = "invalid_grant_base64" }); }
+        catch (DecoderFallbackException) { return BadRequest(new { error = "grant_is_not_valid_utf8" }); }
+        byte[] signatureBytes;
+        try { signatureBytes = Convert.FromBase64String(request.SignatureBase64); }
+        catch (FormatException) { return BadRequest(new { error = "invalid_signature_base64" }); }
         GrantEnvelope? grant;
         try { grant = JsonSerializer.Deserialize<GrantEnvelope>(grantJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
         catch (JsonException) { return BadRequest(new { error = "invalid_grant_json" }); }
         if (grant?.ClientId is null || grant.DeviceId is null || string.IsNullOrWhiteSpace(request.SignatureBase64))
             return BadRequest(new { error = "incomplete_signed_grant" });
+        var keyId = request.KeyId ?? "primary-2026";
+        var signatureResult = signatureVerifier.Verify(keyId, grantBytes, signatureBytes);
+        if (signatureResult == SignatureVerificationResult.KeyNotConfigured)
+            return ApiProblems.Create(HttpContext, StatusCodes.Status503ServiceUnavailable,
+                "signing_key_not_configured", "License signing key is not configured");
+        if (signatureResult == SignatureVerificationResult.InvalidPublicKey)
+            return ApiProblems.Create(HttpContext, StatusCodes.Status503ServiceUnavailable,
+                "invalid_signing_key", "Configured license signing key is invalid");
+        if (signatureResult == SignatureVerificationResult.InvalidSignature)
+            return ApiProblems.Create(HttpContext, StatusCodes.Status400BadRequest,
+                "invalid_license_signature", "License signature is invalid");
         var client = await db.Clients.SingleOrDefaultAsync(x => x.ExternalClientId == grant.ClientId);
         if (client is null) return NotFound(new { error = "client_not_found" });
         var device = await db.Devices.SingleOrDefaultAsync(x => x.ClientId == client.Id && x.ExternalDeviceId == grant.DeviceId);
@@ -165,8 +187,8 @@ public class AdminController(HonestDbContext db, IConfiguration configuration) :
         var active = await db.Licenses.Where(x => x.ClientId == client.Id && x.DeviceId == device.Id && x.Status == "Active").ToListAsync();
         foreach (var old in active) old.Status = "Superseded";
         var license = new License { ClientId = client.Id, DeviceId = device.Id, Revision = grant.Revision,
-            GrantJson = grantJson, SignatureBase64 = request.SignatureBase64,
-            KeyId = request.KeyId ?? "primary-2026", Status = "Active",
+            GrantJson = grantJson, GrantBytes = grantBytes, SignatureBase64 = request.SignatureBase64,
+            KeyId = keyId, Status = "Active",
             IssuedAtUtc = grant.IssuedAtUtc, ValidUntilUtc = grant.ValidUntilUtc, PublishedAtUtc = DateTime.UtcNow };
         db.Licenses.Add(license); await db.SaveChangesAsync();
         AddAudit("License.Published", "License", license.Id.ToString(), client.Id, new { grant.Revision, grant.DeviceId });

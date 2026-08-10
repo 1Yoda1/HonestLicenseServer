@@ -1,4 +1,3 @@
-using System.Text;
 using HonestLicenseServer.Authentication;
 using HonestLicenseServer.Contracts;
 using HonestLicenseServer.Data;
@@ -40,7 +39,7 @@ public class LicenseController(HonestDbContext db) : ControllerBase
             return ApiProblems.Create(HttpContext, StatusCodes.Status404NotFound,
                 "license_not_found", "An active license was not found");
 
-        return Ok(new LicenseResponse(Convert.ToBase64String(Encoding.UTF8.GetBytes(license.GrantJson)),
+        return Ok(new LicenseResponse(Convert.ToBase64String(license.GrantBytes),
             license.SignatureBase64, license.KeyId, license.Revision,
             license.IssuedAtUtc, license.ValidUntilUtc));
     }

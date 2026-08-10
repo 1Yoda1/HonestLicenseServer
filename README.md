@@ -3,6 +3,12 @@
 Согласованные границы системы и решения перед интеграцией клиентов описаны в
 [`docs/architecture-decisions.md`](docs/architecture-decisions.md).
 
+Интеграционные тесты используют отдельную временную SQLite-базу:
+
+```powershell
+dotnet test HonestLicenseServer.slnx -c Release
+```
+
 Локальный сервер лицензирования на .NET 10, ASP.NET Core, EF Core и SQLite.
 
 ## База

@@ -49,6 +49,7 @@ public class License
     public int DeviceId { get; set; }
     public long Revision { get; set; }
     public required string GrantJson { get; set; }
+    public required byte[] GrantBytes { get; set; }
     public required string SignatureBase64 { get; set; }
     public required string KeyId { get; set; }
     public required string Status { get; set; }

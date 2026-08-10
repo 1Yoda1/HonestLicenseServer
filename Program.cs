@@ -73,6 +73,7 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddDbContext<HonestDbContext>(options =>
     options.UseSqlite(connectionStringBuilder.ConnectionString));
 builder.Services.AddSingleton<LoginAttemptLimiter>();
+builder.Services.AddSingleton<LicenseSignatureVerifier>();
 builder.Services.AddAuthentication(OpaqueBearerDefaults.Scheme)
     .AddScheme<AuthenticationSchemeOptions, OpaqueBearerHandler>(
         OpaqueBearerDefaults.Scheme, _ => { });
@@ -140,3 +141,5 @@ app.MapGet("/", () => Results.Redirect("/swagger"))
     .ExcludeFromDescription();
 
 app.Run();
+
+public partial class Program;
