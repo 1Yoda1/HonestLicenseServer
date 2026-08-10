@@ -1,4 +1,9 @@
+using System.Text;
+using HonestLicenseServer.Authentication;
+using HonestLicenseServer.Contracts;
 using HonestLicenseServer.Data;
+using HonestLicenseServer.Infrastructure;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,20 +14,34 @@ namespace HonestLicenseServer.Controllers;
 public class LicenseController(HonestDbContext db) : ControllerBase
 {
     [HttpGet("current")]
-    public async Task<IActionResult> Current()
+    [Authorize(Policy = OpaqueBearerDefaults.ActiveDevicePolicy)]
+    [ProducesResponseType<LicenseResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status410Gone)]
+    public async Task<ActionResult<LicenseResponse>> Current()
     {
-        var clientId = HttpContext.Items["ClientId"] as int?;
-        var deviceId = HttpContext.Items["DeviceId"] as int?;
-        if (clientId is null) return Unauthorized();
-        if (deviceId is null) return StatusCode(403, new { error = "device_registration_required" });
-        var device = await db.Devices.AsNoTracking().SingleOrDefaultAsync(x => x.Id == deviceId && x.ClientId == clientId);
-        if (device?.Status != "Active") return StatusCode(403, new { error = "device_disabled" });
-
+        var clientId = User.ClientId();
+        var deviceId = User.DeviceId()!.Value;
         var license = await db.Licenses.AsNoTracking().Where(x =>
-                x.ClientId == clientId && x.DeviceId == deviceId && x.Status == "Active" && x.ValidUntilUtc > DateTime.UtcNow)
+                x.ClientId == clientId && x.DeviceId == deviceId)
             .OrderByDescending(x => x.Revision).FirstOrDefaultAsync();
-        if (license is null) return NotFound(new { error = "active_license_not_found" });
-        return Ok(new { license.GrantJson, license.SignatureBase64, license.KeyId,
-            license.Revision, license.IssuedAtUtc, license.ValidUntilUtc });
+        if (license is null)
+            return ApiProblems.Create(HttpContext, StatusCodes.Status404NotFound,
+                "license_not_found", "License was not found");
+        if (license.Status == "Revoked")
+            return ApiProblems.Create(HttpContext, StatusCodes.Status410Gone,
+                "license_revoked", "License has been revoked");
+        if (license.ValidUntilUtc <= DateTime.UtcNow || license.Status == "Expired")
+            return ApiProblems.Create(HttpContext, StatusCodes.Status410Gone,
+                "license_expired", "License has expired");
+        if (license.Status != "Active")
+            return ApiProblems.Create(HttpContext, StatusCodes.Status404NotFound,
+                "license_not_found", "An active license was not found");
+
+        return Ok(new LicenseResponse(Convert.ToBase64String(Encoding.UTF8.GetBytes(license.GrantJson)),
+            license.SignatureBase64, license.KeyId, license.Revision,
+            license.IssuedAtUtc, license.ValidUntilUtc));
     }
 }

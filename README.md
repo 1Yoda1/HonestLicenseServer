@@ -1,5 +1,8 @@
 # HonestLicenseServer
 
+Согласованные границы системы и решения перед интеграцией клиентов описаны в
+[`docs/architecture-decisions.md`](docs/architecture-decisions.md).
+
 Локальный сервер лицензирования на .NET 10, ASP.NET Core, EF Core и SQLite.
 
 ## База
