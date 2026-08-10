@@ -131,7 +131,8 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (!string.IsNullOrWhiteSpace(clientId)) query = query.Where(x => x.Client.ExternalClientId == clientId);
         return Ok(await query.OrderByDescending(x => x.Revision).Select(x => new
         { x.Id, clientId = x.Client.ExternalClientId, clientName = x.Client.Name,
-          deviceId = x.Device.ExternalDeviceId, x.Revision, x.KeyId, x.Status,
+          deviceId = x.Device.ExternalDeviceId, x.Revision, x.KeyId, x.SignatureScope,
+          x.SignatureVerifiedAtUtc, x.Status,
           x.IssuedAtUtc, x.ValidUntilUtc, hasSignature = x.SignatureBase64 != "" }).ToListAsync());
     }
 
@@ -141,7 +142,8 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (!IsAdmin()) return AdminUnauthorized();
         var value = await db.Licenses.AsNoTracking().Where(x => x.Id == id).Select(x => new
         { x.Id, clientId = x.Client.ExternalClientId, deviceId = x.Device.ExternalDeviceId,
-          x.Revision, x.GrantJson, x.SignatureBase64, x.KeyId, x.Status,
+          x.Revision, x.GrantJson, x.SignatureBase64, x.KeyId, x.SignatureScope,
+          x.SignatureVerifiedAtUtc, x.Status,
           x.IssuedAtUtc, x.ValidUntilUtc, x.PublishedAtUtc }).SingleOrDefaultAsync();
         return value is null ? NotFound(new { error = "license_not_found" }) : Ok(value);
     }
@@ -188,7 +190,8 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         foreach (var old in active) old.Status = "Superseded";
         var license = new License { ClientId = client.Id, DeviceId = device.Id, Revision = grant.Revision,
             GrantJson = grantJson, GrantBytes = grantBytes, SignatureBase64 = request.SignatureBase64,
-            KeyId = keyId, Status = "Active",
+            KeyId = keyId, SignatureScope = "PersonalGrant",
+            SignatureVerifiedAtUtc = DateTime.UtcNow, Status = "Active",
             IssuedAtUtc = grant.IssuedAtUtc, ValidUntilUtc = grant.ValidUntilUtc, PublishedAtUtc = DateTime.UtcNow };
         db.Licenses.Add(license); await db.SaveChangesAsync();
         AddAudit("License.Published", "License", license.Id.ToString(), client.Id, new { grant.Revision, grant.DeviceId });

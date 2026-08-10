@@ -51,10 +51,30 @@ public static class DatabaseSchema
             await using var backfill = connection.CreateCommand();
             backfill.CommandText = "UPDATE Licenses SET GrantBytes = CAST(GrantJson AS BLOB) WHERE GrantBytes IS NULL;";
             await backfill.ExecuteNonQueryAsync(cancellationToken);
+
+            await EnsureColumnAsync(connection, "Licenses", "SignatureScope",
+                "TEXT NOT NULL DEFAULT 'LegacySnapshot'", cancellationToken);
+            await EnsureColumnAsync(connection, "Licenses", "SignatureVerifiedAtUtc",
+                "TEXT NULL", cancellationToken);
         }
         finally
         {
             if (closeWhenDone) await connection.CloseAsync();
         }
+    }
+
+    private static async Task EnsureColumnAsync(System.Data.Common.DbConnection connection,
+        string table, string column, string definition, CancellationToken cancellationToken)
+    {
+        await using var columns = connection.CreateCommand();
+        columns.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await columns.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase)) return;
+        await reader.DisposeAsync();
+
+        await using var addColumn = connection.CreateCommand();
+        addColumn.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
+        await addColumn.ExecuteNonQueryAsync(cancellationToken);
     }
 }

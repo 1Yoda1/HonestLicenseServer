@@ -24,6 +24,7 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
         b.Entity<Credential>().HasIndex(x => x.Login).IsUnique();
         b.Entity<Device>().HasIndex(x => new { x.ClientId, x.ExternalDeviceId }).IsUnique();
         b.Entity<License>().HasIndex(x => new { x.ClientId, x.DeviceId, x.Revision }).IsUnique();
+        b.Entity<License>().Property(x => x.SignatureScope).HasDefaultValue("LegacySnapshot");
         b.Entity<AppVersion>().HasIndex(x => x.Application).IsUnique();
         b.Entity<ClientComponentVersion>().HasIndex(x => new { x.ClientId, x.Component }).IsUnique();
         b.Entity<ComponentAsset>().HasIndex(x => new { x.Component, x.Version }).IsUnique();

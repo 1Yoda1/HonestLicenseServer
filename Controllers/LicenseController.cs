@@ -24,7 +24,8 @@ public class LicenseController(HonestDbContext db) : ControllerBase
         var clientId = User.ClientId();
         var deviceId = User.DeviceId()!.Value;
         var license = await db.Licenses.AsNoTracking().Where(x =>
-                x.ClientId == clientId && x.DeviceId == deviceId)
+                x.ClientId == clientId && x.DeviceId == deviceId &&
+                x.SignatureScope == "PersonalGrant" && x.SignatureVerifiedAtUtc != null)
             .OrderByDescending(x => x.Revision).FirstOrDefaultAsync();
         if (license is null)
             return ApiProblems.Create(HttpContext, StatusCodes.Status404NotFound,

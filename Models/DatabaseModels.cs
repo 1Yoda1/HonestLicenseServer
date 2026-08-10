@@ -52,6 +52,8 @@ public class License
     public required byte[] GrantBytes { get; set; }
     public required string SignatureBase64 { get; set; }
     public required string KeyId { get; set; }
+    public required string SignatureScope { get; set; }
+    public DateTime? SignatureVerifiedAtUtc { get; set; }
     public required string Status { get; set; }
     public DateTime IssuedAtUtc { get; set; }
     public DateTime ValidUntilUtc { get; set; }
