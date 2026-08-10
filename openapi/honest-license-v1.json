@@ -2414,6 +2414,14 @@
           },
           "deviceRegistrationRequired": {
             "type": "boolean"
+          },
+          "clientId": {
+            "type": "string",
+            "nullable": true
+          },
+          "clientName": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false

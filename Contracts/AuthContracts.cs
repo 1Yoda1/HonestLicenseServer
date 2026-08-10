@@ -13,7 +13,9 @@ public sealed record TokenResponse(
     string AccessToken,
     string RefreshToken,
     int ExpiresInSeconds,
-    bool DeviceRegistrationRequired);
+    bool DeviceRegistrationRequired,
+    string ClientId,
+    string ClientName);
 
 public sealed record DeviceRegistrationRequestDto(
     [Required, StringLength(128, MinimumLength = 1)] string DeviceId,

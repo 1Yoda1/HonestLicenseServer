@@ -297,11 +297,15 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         var accessToken = loginTokens.GetProperty("accessToken").GetString()!;
         var refreshToken = loginTokens.GetProperty("refreshToken").GetString()!;
         Assert.False(loginTokens.GetProperty("deviceRegistrationRequired").GetBoolean());
+        Assert.Equal("integration-client", loginTokens.GetProperty("clientId").GetString());
+        Assert.Equal("Integration Client", loginTokens.GetProperty("clientName").GetString());
 
         var refresh = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
         Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
         var refreshedTokens = await refresh.Content.ReadFromJsonAsync<JsonElement>();
         var refreshedAccess = refreshedTokens.GetProperty("accessToken").GetString()!;
+        Assert.Equal("integration-client", refreshedTokens.GetProperty("clientId").GetString());
+        Assert.Equal("Integration Client", refreshedTokens.GetProperty("clientName").GetString());
         var reused = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
         Assert.Equal(HttpStatusCode.Unauthorized, reused.StatusCode);
 
@@ -384,6 +388,8 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         var tokens = await login.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(tokens.GetProperty("deviceRegistrationRequired").GetBoolean());
+        Assert.Equal("integration-client", tokens.GetProperty("clientId").GetString());
+        Assert.Equal("Integration Client", tokens.GetProperty("clientName").GetString());
 
         using (var scope = factory.Services.CreateScope())
         {

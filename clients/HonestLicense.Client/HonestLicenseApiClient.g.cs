@@ -3982,6 +3982,12 @@ namespace HonestLicense.Client
         [System.Text.Json.Serialization.JsonPropertyName("deviceRegistrationRequired")]
         public bool DeviceRegistrationRequired { get; set; }
 
+        [System.Text.Json.Serialization.JsonPropertyName("clientId")]
+        public string? ClientId { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("clientName")]
+        public string? ClientName { get; set; }
+
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]

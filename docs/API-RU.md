@@ -34,6 +34,10 @@ API работает с SQLite. Старые `ips_encrypted.json`, `versions.jso
 HonestFlow получает `accessToken` и `refreshToken` через
 `POST /api/auth/login`.
 
+Успешный `TokenResponse` также содержит `clientId` и `clientName` для
+идентификации клиента. Эти поля возвращаются и pending-устройству, но не
+меняют его разрешения: конфигурация и лицензия по-прежнему недоступны.
+
 ```http
 Authorization: Bearer ACCESS_TOKEN
 ```
@@ -147,7 +151,9 @@ Rate limit:
   "accessToken": "...",
   "refreshToken": "...",
   "expiresInSeconds": 900,
-  "deviceRegistrationRequired": false
+  "deviceRegistrationRequired": false,
+  "clientId": "client-123",
+  "clientName": "Название клиента"
 }
 ```
 

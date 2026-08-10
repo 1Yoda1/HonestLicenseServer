@@ -52,7 +52,9 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
 
         var pair = CreateSession(credential.ClientId, device?.Id, request.DeviceId, null);
         await db.SaveChangesAsync();
-        return Ok(new TokenResponse(pair.AccessToken, pair.RefreshToken, 900, device is null));
+        return Ok(new TokenResponse(
+            pair.AccessToken, pair.RefreshToken, 900, device is null,
+            credential.Client.ExternalClientId, credential.Client.Name));
     }
 
     [HttpPost("refresh")]
@@ -87,7 +89,9 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
         await db.SaveChangesAsync();
         current.ReplacedByTokenId = pair.Session.Id;
         await db.SaveChangesAsync();
-        return Ok(new TokenResponse(pair.AccessToken, pair.RefreshToken, 900, pair.Session.DeviceId is null));
+        return Ok(new TokenResponse(
+            pair.AccessToken, pair.RefreshToken, 900, pair.Session.DeviceId is null,
+            client.ExternalClientId, client.Name));
     }
 
     [HttpPost("logout")]
