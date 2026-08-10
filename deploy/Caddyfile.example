@@ -18,3 +18,7 @@ honestflow.ru {
         file_server
     }
 }
+
+www.honestflow.ru {
+    redir https://honestflow.ru{uri} permanent
+}
