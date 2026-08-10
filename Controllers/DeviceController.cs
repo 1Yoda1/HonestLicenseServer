@@ -13,6 +13,36 @@ namespace HonestLicenseServer.Controllers;
 [Route("api/device")]
 public class DeviceController(HonestDbContext db) : ControllerBase
 {
+    [HttpGet("registration/current")]
+    [Authorize(Policy = OpaqueBearerDefaults.ActiveClientPolicy)]
+    [ProducesResponseType<RegistrationStatusResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<RegistrationStatusResponse>> CurrentRegistration()
+    {
+        var clientId = User.ClientId();
+        var externalDeviceId = User.ExternalDeviceId();
+        var request = await db.DeviceRegistrationRequests.AsNoTracking()
+            .Where(x => x.ClientId == clientId && x.ExternalDeviceId == externalDeviceId)
+            .OrderByDescending(x => x.RequestedAtUtc)
+            .FirstOrDefaultAsync();
+
+        if (request is null && User.DeviceId() is int deviceId)
+        {
+            var registeredAtUtc = await db.Devices.AsNoTracking()
+                .Where(x => x.Id == deviceId)
+                .Select(x => x.RegisteredAtUtc)
+                .SingleAsync();
+            return Ok(new RegistrationStatusResponse(externalDeviceId, "Approved",
+                registeredAtUtc, registeredAtUtc, null));
+        }
+        if (request is null)
+            return ApiProblems.Create(HttpContext, StatusCodes.Status404NotFound,
+                "device_request_not_found", "Device registration request was not found");
+
+        return Ok(new RegistrationStatusResponse(request.ExternalDeviceId, request.Status,
+            request.RequestedAtUtc, request.ResolvedAtUtc, request.Comment));
+    }
+
     [HttpPost("request")]
     [Authorize(Policy = OpaqueBearerDefaults.ActiveClientPolicy)]
     [ProducesResponseType<DeviceRegistrationResponse>(StatusCodes.Status202Accepted)]
@@ -34,6 +64,10 @@ public class DeviceController(HonestDbContext db) : ControllerBase
             x.ClientId == clientId && x.ExternalDeviceId == request.DeviceId && x.Status == "Pending");
         if (pending is null)
         {
+            var existing = await db.DeviceRegistrationRequests.SingleOrDefaultAsync(x =>
+                x.ClientId == clientId && x.ExternalDeviceId == request.DeviceId);
+            if (existing is not null)
+                return Ok(new DeviceRegistrationResponse(existing.Id, existing.Status, existing.RequestedAtUtc));
             pending = new DeviceRegistrationRequest { ClientId = clientId,
                 ExternalDeviceId = request.DeviceId, RequestedName = request.Name,
                 Status = "Pending", RequestedAtUtc = DateTime.UtcNow };

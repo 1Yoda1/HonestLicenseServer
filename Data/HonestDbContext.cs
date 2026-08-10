@@ -11,6 +11,10 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
     public DbSet<License> Licenses => Set<License>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<AppVersion> AppVersions => Set<AppVersion>();
+    public DbSet<ClientComponentVersion> ClientComponentVersions => Set<ClientComponentVersion>();
+    public DbSet<ComponentAsset> ComponentAssets => Set<ComponentAsset>();
+    public DbSet<ClientSetting> ClientSettings => Set<ClientSetting>();
+    public DbSet<LicensePolicy> LicensePolicies => Set<LicensePolicy>();
     public DbSet<DeviceRegistrationRequest> DeviceRegistrationRequests => Set<DeviceRegistrationRequest>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
@@ -21,6 +25,10 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
         b.Entity<Device>().HasIndex(x => new { x.ClientId, x.ExternalDeviceId }).IsUnique();
         b.Entity<License>().HasIndex(x => new { x.ClientId, x.DeviceId, x.Revision }).IsUnique();
         b.Entity<AppVersion>().HasIndex(x => x.Application).IsUnique();
+        b.Entity<ClientComponentVersion>().HasIndex(x => new { x.ClientId, x.Component }).IsUnique();
+        b.Entity<ComponentAsset>().HasIndex(x => new { x.Component, x.Version }).IsUnique();
+        b.Entity<ClientSetting>().HasKey(x => x.ClientId);
+        b.Entity<LicensePolicy>().HasKey(x => x.ClientId);
         b.Entity<RefreshToken>().HasIndex(x => x.AccessTokenHash).IsUnique();
         b.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
 
@@ -32,5 +40,11 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
             .HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.Restrict);
         b.Entity<RefreshToken>().HasOne(x => x.Device).WithMany()
             .HasForeignKey(x => x.DeviceId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ClientComponentVersion>().HasOne(x => x.Client).WithMany()
+            .HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<ClientSetting>().HasOne(x => x.Client).WithOne()
+            .HasForeignKey<ClientSetting>(x => x.ClientId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<LicensePolicy>().HasOne(x => x.Client).WithOne()
+            .HasForeignKey<LicensePolicy>(x => x.ClientId).OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -67,6 +67,53 @@ public class AppVersion
     public DateTime ImportedAtUtc { get; set; }
 }
 
+public class ClientComponentVersion
+{
+    public int Id { get; set; }
+    public int ClientId { get; set; }
+    public required string Component { get; set; }
+    public string? RequiredVersion { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+    public Client Client { get; set; } = null!;
+}
+
+public class ComponentAsset
+{
+    public int Id { get; set; }
+    public required string Component { get; set; }
+    public required string Version { get; set; }
+    public required string FileName { get; set; }
+    public required string DownloadUrl { get; set; }
+    public string? Sha256 { get; set; }
+    public long? SizeBytes { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
+public class ClientSetting
+{
+    public int ClientId { get; set; }
+    public bool RuDesktopEnabled { get; set; }
+    public bool RuDesktopAutoOfferPasswordSetup { get; set; }
+    public string? RuDesktopPasswordHash { get; set; }
+    public string? EngineerAlgorithm { get; set; }
+    public int? EngineerIterations { get; set; }
+    public string? EngineerSaltBase64 { get; set; }
+    public string? EngineerPasswordHashBase64 { get; set; }
+    public Client Client { get; set; } = null!;
+}
+
+public class LicensePolicy
+{
+    public int ClientId { get; set; }
+    public bool IsEnabled { get; set; }
+    public string? MinimumHonestFlowVersion { get; set; }
+    public int OfflineGraceHours { get; set; }
+    public long SourceRevision { get; set; }
+    public DateTime SourceIssuedAtUtc { get; set; }
+    public DateTime SourceValidUntilUtc { get; set; }
+    public Client Client { get; set; } = null!;
+}
+
 public class DeviceRegistrationRequest
 {
     public int Id { get; set; }

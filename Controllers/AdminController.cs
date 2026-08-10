@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using HonestLicenseServer.Data;
+using HonestLicenseServer.Contracts;
 using HonestLicenseServer.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -232,11 +233,102 @@ public class AdminController(HonestDbContext db, IConfiguration configuration) :
         if (pending is null) return NotFound(new { error = "device_request_not_found" });
         if (pending.Status != "Pending") return Conflict(new { error = "device_request_already_resolved" });
         pending.Status = "Rejected"; pending.ResolvedAtUtc = DateTime.UtcNow; pending.Comment = request.Comment;
-        var sessions = await db.RefreshTokens.Where(x => x.ClientId == pending.ClientId &&
-            x.RequestedExternalDeviceId == pending.ExternalDeviceId && x.RevokedAtUtc == null).ToListAsync();
-        foreach (var session in sessions) { session.RevokedAtUtc = DateTime.UtcNow; session.RevokeReason = "device_request_rejected"; }
         AddAudit("DeviceRequest.Rejected", "DeviceRegistrationRequest", id.ToString(), pending.ClientId, new { request.Comment });
         await db.SaveChangesAsync(); return NoContent();
+    }
+
+    [HttpGet("assets")]
+    public async Task<IActionResult> Assets([FromQuery] string? component = null)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var query = db.ComponentAssets.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(component))
+            query = query.Where(x => x.Component == component);
+        return Ok(await query.OrderBy(x => x.Component).ThenByDescending(x => x.Version)
+            .Select(x => new { x.Component, x.Version, x.FileName, x.DownloadUrl,
+                x.Sha256, x.SizeBytes, x.UpdatedAtUtc }).ToListAsync());
+    }
+
+    [HttpPut("assets/{component}/{version}")]
+    public async Task<IActionResult> PutAsset(string component, string version,
+        PutComponentAssetRequest request)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var asset = await db.ComponentAssets.SingleOrDefaultAsync(x =>
+            x.Component == component && x.Version == version);
+        if (asset is null)
+        {
+            asset = new ComponentAsset { Component = component, Version = version,
+                FileName = request.FileName, DownloadUrl = request.DownloadUrl,
+                Sha256 = request.Sha256?.ToLowerInvariant(), SizeBytes = request.SizeBytes,
+                UpdatedAtUtc = DateTime.UtcNow };
+            db.ComponentAssets.Add(asset);
+        }
+        else
+        {
+            asset.FileName = request.FileName;
+            asset.DownloadUrl = request.DownloadUrl;
+            asset.Sha256 = request.Sha256?.ToLowerInvariant();
+            asset.SizeBytes = request.SizeBytes;
+            asset.UpdatedAtUtc = DateTime.UtcNow;
+        }
+        AddAudit("Asset.Updated", "ComponentAsset", $"{component}:{version}", null,
+            new { component, version, request.FileName });
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpGet("clients/{clientId}/component-versions")]
+    public async Task<IActionResult> ComponentOverrides(string clientId)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        if (!await db.Clients.AnyAsync(x => x.ExternalClientId == clientId))
+            return NotFound(new { error = "client_not_found" });
+        return Ok(await db.ClientComponentVersions.AsNoTracking()
+            .Where(x => x.Client.ExternalClientId == clientId)
+            .OrderBy(x => x.Component)
+            .Select(x => new { x.Component, x.RequiredVersion, x.UpdatedAtUtc }).ToListAsync());
+    }
+
+    [HttpPut("clients/{clientId}/component-versions/{component}")]
+    public async Task<IActionResult> PutComponentOverride(string clientId, string component,
+        PutComponentOverrideRequest request)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var client = await db.Clients.SingleOrDefaultAsync(x => x.ExternalClientId == clientId);
+        if (client is null) return NotFound(new { error = "client_not_found" });
+        var current = await db.ClientComponentVersions.SingleOrDefaultAsync(x =>
+            x.ClientId == client.Id && x.Component == component);
+        var requiredVersion = string.IsNullOrWhiteSpace(request.RequiredVersion)
+            ? null : request.RequiredVersion.Trim();
+
+        if (requiredVersion is null)
+        {
+            if (current is not null) db.ClientComponentVersions.Remove(current);
+        }
+        else
+        {
+            if (!await db.ComponentAssets.AnyAsync(x =>
+                    x.Component == component && x.Version == requiredVersion))
+                return NotFound(new { error = "component_asset_not_found" });
+            if (current is null)
+            {
+                current = new ClientComponentVersion { ClientId = client.Id,
+                    Component = component, RequiredVersion = requiredVersion,
+                    UpdatedAtUtc = DateTime.UtcNow };
+                db.ClientComponentVersions.Add(current);
+            }
+            else
+            {
+                current.RequiredVersion = requiredVersion;
+                current.UpdatedAtUtc = DateTime.UtcNow;
+            }
+        }
+
+        AddAudit("ComponentOverride.Updated", "Client", client.Id.ToString(), client.Id,
+            new { component, requiredVersion });
+        await db.SaveChangesAsync();
+        return NoContent();
     }
 
     private bool IsAdmin()

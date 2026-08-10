@@ -45,7 +45,7 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
                 "device_disabled", "Device is disabled");
 
         if (device is null && !await db.DeviceRegistrationRequests.AnyAsync(x =>
-            x.ClientId == credential.ClientId && x.ExternalDeviceId == request.DeviceId && x.Status == "Pending"))
+            x.ClientId == credential.ClientId && x.ExternalDeviceId == request.DeviceId))
         {
             db.DeviceRegistrationRequests.Add(new DeviceRegistrationRequest
             {

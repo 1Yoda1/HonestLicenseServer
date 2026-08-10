@@ -118,6 +118,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+    await DatabaseSchema.EnsureCurrentAsync(db);
     if (!db.Database.CanConnect())
         throw new InvalidOperationException($"Не удалось открыть базу данных: {connectionStringBuilder.DataSource}");
 }
