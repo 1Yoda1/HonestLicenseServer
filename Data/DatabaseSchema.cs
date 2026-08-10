@@ -38,6 +38,28 @@ public static class DatabaseSchema
             CREATE INDEX IF NOT EXISTS IX_SupportRequests_Status_CreatedAtUtc
                 ON SupportRequests(Status, CreatedAtUtc);
             """, cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS ConnectionRequests (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                CreatedAtUtc TEXT NOT NULL,
+                ContactName TEXT NOT NULL,
+                Company TEXT NULL,
+                Phone TEXT NOT NULL,
+                Email TEXT NULL,
+                City TEXT NULL,
+                WorkplaceCount INTEGER NOT NULL,
+                InventorySystem TEXT NULL,
+                Comment TEXT NULL,
+                Source TEXT NULL,
+                Status TEXT NOT NULL,
+                IpAddress TEXT NULL,
+                UserAgent TEXT NULL,
+                NotificationSentAtUtc TEXT NULL,
+                NotificationError TEXT NULL
+            );
+            CREATE INDEX IF NOT EXISTS IX_ConnectionRequests_Status_CreatedAtUtc
+                ON ConnectionRequests(Status, CreatedAtUtc);
+            """, cancellationToken);
 
         var connection = db.Database.GetDbConnection();
         var closeWhenDone = connection.State != System.Data.ConnectionState.Open;

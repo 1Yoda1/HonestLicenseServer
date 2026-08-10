@@ -3,12 +3,81 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text;
+using HonestLicenseServer.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace HonestLicenseServer.IntegrationTests;
 
 public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
+    [Fact]
+    public async Task Public_connection_request_is_saved_even_when_smtp_is_unavailable()
+    {
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("HonestFlow-Site-Test/1.0");
+        var response = await client.PostAsJsonAsync("/api/connection-requests", new
+        {
+            contactName = "Иван Иванов", company = "ООО Ромашка",
+            phone = "+7 999 000-00-00", email = "ivan@example.ru", city = "Омск",
+            workplaceCount = 12, inventorySystem = "1С",
+            comment = "Хотим подключить сеть магазинов", website = "",
+            source = "honestflow-site"
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(result.GetProperty("success").GetBoolean());
+        var id = result.GetProperty("requestId").GetInt32();
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+        var saved = await db.ConnectionRequests.SingleAsync(x => x.Id == id);
+        Assert.Equal("New", saved.Status);
+        Assert.Equal("Иван Иванов", saved.ContactName);
+        Assert.Equal(12, saved.WorkplaceCount);
+        Assert.Null(saved.NotificationSentAtUtc);
+        Assert.Contains("SMTP", saved.NotificationError);
+    }
+
+    [Fact]
+    public async Task Connection_request_honeypot_returns_success_without_saving()
+    {
+        int before;
+        await using (var scope = factory.Services.CreateAsyncScope())
+            before = await scope.ServiceProvider.GetRequiredService<HonestDbContext>()
+                .ConnectionRequests.CountAsync();
+
+        using var client = factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/connection-requests", new
+        {
+            contactName = "Bot", phone = "123", workplaceCount = 1,
+            website = "https://spam.example"
+        });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var after = await verificationScope.ServiceProvider.GetRequiredService<HonestDbContext>()
+            .ConnectionRequests.CountAsync();
+        Assert.Equal(before, after);
+    }
+
+    [Fact]
+    public async Task Invalid_connection_request_returns_public_safe_error()
+    {
+        using var client = factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/connection-requests", new
+        {
+            contactName = "", phone = "1", workplaceCount = 0, email = "not-an-email"
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(result.GetProperty("success").GetBoolean());
+        Assert.Equal("Проверьте заполненные данные.", result.GetProperty("message").GetString());
+    }
+
     [Fact]
     public async Task Protected_endpoint_without_token_returns_problem_details()
     {

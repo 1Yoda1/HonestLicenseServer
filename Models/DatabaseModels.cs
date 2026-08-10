@@ -177,3 +177,23 @@ public class SupportRequest
     public Client Client { get; set; } = null!;
     public Device? Device { get; set; }
 }
+
+public class ConnectionRequest
+{
+    public int Id { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public required string ContactName { get; set; }
+    public string? Company { get; set; }
+    public required string Phone { get; set; }
+    public string? Email { get; set; }
+    public string? City { get; set; }
+    public int WorkplaceCount { get; set; }
+    public string? InventorySystem { get; set; }
+    public string? Comment { get; set; }
+    public string? Source { get; set; }
+    public required string Status { get; set; }
+    public string? IpAddress { get; set; }
+    public string? UserAgent { get; set; }
+    public DateTime? NotificationSentAtUtc { get; set; }
+    public string? NotificationError { get; set; }
+}

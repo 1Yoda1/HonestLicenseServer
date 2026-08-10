@@ -1,12 +1,16 @@
 using HonestLicenseServer.Data;
+using HonestLicenseServer.Contracts;
 using HonestLicenseServer.Authentication;
 using HonestLicenseServer.Infrastructure;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
+using System.Net;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -33,6 +37,13 @@ builder.Services.AddExceptionHandler(options =>
             .CreateLogger("UnhandledException")
             .LogError(error, "Unhandled exception while processing {Method} {Path}",
                 context.Request.Method, context.Request.Path);
+        if (context.Request.Path.Equals("/api/connection-requests"))
+        {
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            await context.Response.WriteAsJsonAsync(new ConnectionRequestErrorResponse(
+                false, "Не удалось отправить заявку. Попробуйте позже."));
+            return;
+        }
         await ApiProblems.WriteAsync(context, StatusCodes.Status500InternalServerError,
             "internal_server_error", "An unexpected server error occurred.",
             builder.Environment.IsDevelopment() ? error?.Message : null);
@@ -42,6 +53,10 @@ builder.Services.AddControllers(options => options.Filters.Add<ApiErrorResultFil
 {
     options.InvalidModelStateResponseFactory = actionContext =>
     {
+        if (actionContext.HttpContext.Request.Path.Equals("/api/connection-requests"))
+            return new BadRequestObjectResult(new ConnectionRequestErrorResponse(
+                false, "Проверьте заполненные данные."));
+
         var result = ApiProblems.Create(actionContext.HttpContext, StatusCodes.Status400BadRequest,
             "validation_failed", "Request validation failed.");
         if (result.Value is Microsoft.AspNetCore.Mvc.ProblemDetails problem)
@@ -83,6 +98,14 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddDbContext<HonestDbContext>(options =>
     options.UseSqlite(connectionStringBuilder.ConnectionString));
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+builder.Services.AddTransient<IConnectionRequestNotifier, EmailConnectionRequestNotifier>();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownProxies.Add(IPAddress.Loopback);
+    options.KnownProxies.Add(IPAddress.IPv6Loopback);
+});
 builder.Services.AddSingleton<LoginAttemptLimiter>();
 builder.Services.AddSingleton<LicenseSignatureVerifier>();
 builder.Services.AddAuthentication(OpaqueBearerDefaults.Scheme)
@@ -133,6 +156,15 @@ builder.Services.AddRateLimiter(options =>
             QueueLimit = 0,
             AutoReplenishment = true
         }));
+    options.AddPolicy("connection-requests", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromMinutes(10),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
 });
 
 var app = builder.Build();
@@ -140,12 +172,14 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+    await db.Database.EnsureCreatedAsync();
     await DatabaseSchema.EnsureCurrentAsync(db);
     if (!db.Database.CanConnect())
         throw new InvalidOperationException($"Не удалось открыть базу данных: {connectionStringBuilder.DataSource}");
 }
 
 app.UseExceptionHandler();
+app.UseForwardedHeaders();
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseAuthorization();

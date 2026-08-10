@@ -1,0 +1,25 @@
+[Unit]
+Description=HonestLicenseServer API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pavel-shadrov
+Group=pavel-shadrov
+WorkingDirectory=/opt/honestserver
+ExecStart=/opt/honestserver/HonestLicenseServer
+EnvironmentFile=/etc/honestserver/honestserver.env
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/honestserver
+
+[Install]
+WantedBy=multi-user.target

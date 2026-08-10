@@ -3,6 +3,7 @@ bin/
 obj/
 .vs/
 singlefile-publish/
+artifacts/
 *.user
 *.pdb
 
@@ -14,6 +15,7 @@ singlefile-publish/
 
 # Local secrets and machine-specific configuration
 appsettings.Local.json
+deploy/*.env
 
 # Logs and temporary files
 *.log

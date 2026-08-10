@@ -18,6 +18,7 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
     public DbSet<DeviceRegistrationRequest> DeviceRegistrationRequests => Set<DeviceRegistrationRequest>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<SupportRequest> SupportRequests => Set<SupportRequest>();
+    public DbSet<ConnectionRequest> ConnectionRequests => Set<ConnectionRequest>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -34,6 +35,7 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
         b.Entity<RefreshToken>().HasIndex(x => x.AccessTokenHash).IsUnique();
         b.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
         b.Entity<SupportRequest>().HasIndex(x => new { x.Status, x.CreatedAtUtc });
+        b.Entity<ConnectionRequest>().HasIndex(x => new { x.Status, x.CreatedAtUtc });
 
         b.Entity<License>().HasOne(x => x.Client).WithMany(x => x.Licenses)
             .HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.Restrict);

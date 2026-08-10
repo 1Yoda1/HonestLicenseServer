@@ -101,7 +101,9 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = $"Data Source={DatabasePath};Pooling=False",
-                ["AdminApi:Key"] = AdminKey
+                ["AdminApi:Key"] = AdminKey,
+                ["Smtp:Host"] = "",
+                ["Smtp:From"] = ""
             }));
     }
 
