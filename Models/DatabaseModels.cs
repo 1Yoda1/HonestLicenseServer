@@ -161,3 +161,19 @@ public class AuditEvent
     public string? IpAddress { get; set; }
     public required string CorrelationId { get; set; }
 }
+
+public class SupportRequest
+{
+    public int Id { get; set; }
+    public int ClientId { get; set; }
+    public int? DeviceId { get; set; }
+    public required string ExternalDeviceId { get; set; }
+    public required string Subject { get; set; }
+    public required string Message { get; set; }
+    public required string Contact { get; set; }
+    public string? HonestFlowVersion { get; set; }
+    public required string Status { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public Client Client { get; set; } = null!;
+    public Device? Device { get; set; }
+}

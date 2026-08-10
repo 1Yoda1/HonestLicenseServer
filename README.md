@@ -9,6 +9,10 @@
 dotnet test HonestLicenseServer.slnx -c Release
 ```
 
+Текущая лицензия поддерживает `ETag`/`If-None-Match`. Текстовые обращения
+принимаются через `POST /api/support/requests`; SMTP и вложения на первом этапе
+не используются.
+
 Локальный сервер лицензирования на .NET 10, ASP.NET Core, EF Core и SQLite.
 
 ## База

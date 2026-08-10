@@ -20,6 +20,24 @@ public static class DatabaseSchema
                 UNIQUE (Component, Version)
             );
             """, cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS SupportRequests (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ClientId INTEGER NOT NULL,
+                DeviceId INTEGER NULL,
+                ExternalDeviceId TEXT NOT NULL,
+                Subject TEXT NOT NULL,
+                Message TEXT NOT NULL,
+                Contact TEXT NOT NULL,
+                HonestFlowVersion TEXT NULL,
+                Status TEXT NOT NULL,
+                CreatedAtUtc TEXT NOT NULL,
+                FOREIGN KEY (ClientId) REFERENCES Clients(Id) ON DELETE RESTRICT,
+                FOREIGN KEY (DeviceId) REFERENCES Devices(Id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS IX_SupportRequests_Status_CreatedAtUtc
+                ON SupportRequests(Status, CreatedAtUtc);
+            """, cancellationToken);
 
         var connection = db.Database.GetDbConnection();
         var closeWhenDone = connection.State != System.Data.ConnectionState.Open;

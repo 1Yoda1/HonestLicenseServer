@@ -63,7 +63,7 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    public async Task Signed_grant_is_verified_stored_as_original_bytes_and_returned_unchanged()
+    public async Task Signed_grant_supports_etag_and_revocation()
     {
         var grantBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
@@ -85,6 +85,8 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         var publish = await admin.PostAsJsonAsync("/api/admin/licenses", request);
         Assert.True(publish.StatusCode == HttpStatusCode.Created,
             await publish.Content.ReadAsStringAsync());
+        var published = await publish.Content.ReadFromJsonAsync<JsonElement>();
+        var licenseId = published.GetProperty("id").GetInt32();
 
         using var honestFlow = AuthenticatedClient(ApiFactory.ActiveAccessToken);
         var current = await honestFlow.GetAsync("/api/license/current");
@@ -92,6 +94,40 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         var response = await current.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(request.grantBase64, response.GetProperty("grantBase64").GetString());
         Assert.Equal("integration-key", response.GetProperty("keyId").GetString());
+
+        var etag = current.Headers.ETag?.ToString();
+        Assert.False(string.IsNullOrWhiteSpace(etag));
+        using var notModifiedRequest = new HttpRequestMessage(HttpMethod.Get, "/api/license/current");
+        notModifiedRequest.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var notModified = await honestFlow.SendAsync(notModifiedRequest);
+        Assert.Equal(HttpStatusCode.NotModified, notModified.StatusCode);
+
+        var revoke = await admin.PutAsync($"/api/admin/licenses/{licenseId}/revoke", null);
+        Assert.Equal(HttpStatusCode.NoContent, revoke.StatusCode);
+        var revoked = await honestFlow.GetAsync("/api/license/current");
+        Assert.Equal(HttpStatusCode.Gone, revoked.StatusCode);
+        var revokedProblem = await revoked.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("license_revoked", revokedProblem.GetProperty("code").GetString());
+
+        var expiredBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            revision = 1002,
+            clientId = "integration-client",
+            deviceId = "integration-device",
+            issuedAtUtc = DateTime.UtcNow.AddDays(-2),
+            validUntilUtc = DateTime.UtcNow.AddDays(-1)
+        }));
+        var expiredPublish = await admin.PostAsJsonAsync("/api/admin/licenses", new
+        {
+            grantBase64 = Convert.ToBase64String(expiredBytes),
+            signatureBase64 = Convert.ToBase64String(factory.Sign(expiredBytes)),
+            keyId = "integration-key"
+        });
+        Assert.Equal(HttpStatusCode.Created, expiredPublish.StatusCode);
+        var expired = await honestFlow.GetAsync("/api/license/current");
+        Assert.Equal(HttpStatusCode.Gone, expired.StatusCode);
+        var expiredProblem = await expired.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("license_expired", expiredProblem.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -119,6 +155,40 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("invalid_license_signature", json.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Pending_device_can_create_support_request_and_admin_can_read_it()
+    {
+        using var honestFlow = AuthenticatedClient(ApiFactory.PendingAccessToken);
+        var create = await honestFlow.PostAsJsonAsync("/api/support/requests", new
+        {
+            subject = "Device approval",
+            message = "Please check the pending device request.",
+            contact = "integration@example.test",
+            honestFlowVersion = "2.6.2.0"
+        });
+        Assert.Equal(HttpStatusCode.Accepted, create.StatusCode);
+
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        var list = await admin.GetAsync("/api/admin/support-requests");
+        Assert.Equal(HttpStatusCode.OK, list.StatusCode);
+        var items = await list.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains(items.EnumerateArray(), item =>
+            item.GetProperty("subject").GetString() == "Device approval");
+    }
+
+    [Fact]
+    public async Task Admin_errors_use_problem_details()
+    {
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", "wrong-key");
+        var response = await admin.GetAsync("/api/admin/clients");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_admin_key", json.GetProperty("code").GetString());
     }
 
     private HttpClient AuthenticatedClient(string token)

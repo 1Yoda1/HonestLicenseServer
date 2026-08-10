@@ -356,6 +356,34 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         return NoContent();
     }
 
+    [HttpPut("licenses/{id:int}/revoke")]
+    public async Task<IActionResult> RevokeLicense(int id)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var license = await db.Licenses.FindAsync(id);
+        if (license is null) return NotFound(new { error = "license_not_found" });
+        if (license.Status == "Revoked") return NoContent();
+        if (license.Status != "Active") return Conflict(new { error = "license_not_active" });
+        license.Status = "Revoked";
+        AddAudit("License.Revoked", "License", license.Id.ToString(), license.ClientId,
+            new { license.Revision, license.DeviceId });
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpGet("support-requests")]
+    public async Task<IActionResult> SupportRequests([FromQuery] string? status = null)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var query = db.SupportRequests.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status == status);
+        return Ok(await query.OrderByDescending(x => x.CreatedAtUtc).Select(x => new
+        {
+            x.Id, clientId = x.Client.ExternalClientId, x.ExternalDeviceId,
+            x.Subject, x.Message, x.Contact, x.HonestFlowVersion, x.Status, x.CreatedAtUtc
+        }).ToListAsync());
+    }
+
     private bool IsAdmin()
     {
         var expected = configuration["AdminApi:Key"];

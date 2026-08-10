@@ -37,7 +37,8 @@ builder.Services.AddExceptionHandler(options =>
             "internal_server_error", "An unexpected server error occurred.",
             builder.Environment.IsDevelopment() ? error?.Message : null);
     });
-builder.Services.AddControllers().ConfigureApiBehaviorOptions(options =>
+builder.Services.AddControllers(options => options.Filters.Add<ApiErrorResultFilter>())
+    .ConfigureApiBehaviorOptions(options =>
 {
     options.InvalidModelStateResponseFactory = actionContext =>
     {
@@ -112,6 +113,16 @@ builder.Services.AddRateLimiter(options =>
             QueueLimit = 0,
             AutoReplenishment = true
         }));
+    options.AddPolicy("support", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.User.FindFirst(HonestClaimTypes.ClientId)?.Value ??
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromHours(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
 });
 
 var app = builder.Build();
@@ -125,8 +136,8 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseExceptionHandler();
-app.UseRateLimiter();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.UseSwagger();
