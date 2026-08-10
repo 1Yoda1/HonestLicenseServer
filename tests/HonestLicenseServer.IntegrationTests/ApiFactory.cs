@@ -60,6 +60,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             PasswordHash = PasswordHasher.Hash("integration-password"),
             IsActive = true, PasswordChangedAtUtc = now
         });
+        db.ClientSettings.Add(new ClientSetting
+        {
+            ClientId = client.Id,
+            IdentificationCode = "integration-password",
+            ChzToken = "integration-chz-token",
+            RuDesktopEnabled = true
+        });
 
         db.AppVersions.Add(new AppVersion
         {

@@ -16,7 +16,16 @@ public sealed record ConfigurationResponse(
 public sealed record ClientConfiguration(
     string ClientId, string Name, string? Architecture,
     bool HasLmDatabaseBackup, bool RuDesktopEnabled,
-    bool RuDesktopAutoOfferPasswordSetup);
+    bool RuDesktopAutoOfferPasswordSetup,
+    string? IdentificationCode, string? ChzToken);
+
+public sealed record ClientIntegrationSettingsResponse(
+    string ClientId, string? IdentificationCode, string? ChzToken,
+    bool IsConfigured);
+
+public sealed record PutClientIntegrationSettingsRequest(
+    [Required, StringLength(256, MinimumLength = 1)] string IdentificationCode,
+    [Required, StringLength(2048, MinimumLength = 1)] string ChzToken);
 
 public sealed record DeviceConfiguration(
     string DeviceId, string Name, string? Address, string Status);

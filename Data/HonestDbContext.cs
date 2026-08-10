@@ -47,7 +47,7 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
             .HasForeignKey(x => x.DeviceId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<ClientComponentVersion>().HasOne(x => x.Client).WithMany()
             .HasForeignKey(x => x.ClientId).OnDelete(DeleteBehavior.Cascade);
-        b.Entity<ClientSetting>().HasOne(x => x.Client).WithOne()
+        b.Entity<ClientSetting>().HasOne(x => x.Client).WithOne(x => x.Settings)
             .HasForeignKey<ClientSetting>(x => x.ClientId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<LicensePolicy>().HasOne(x => x.Client).WithOne()
             .HasForeignKey<LicensePolicy>(x => x.ClientId).OnDelete(DeleteBehavior.Restrict);

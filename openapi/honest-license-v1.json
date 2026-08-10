@@ -631,6 +631,79 @@
         ]
       }
     },
+    "/api/admin/clients/{clientId}/integration-settings": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "Admin_IntegrationSettings",
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "AdminKey": [ ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "Admin_PutIntegrationSettings",
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutClientIntegrationSettingsRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutClientIntegrationSettingsRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutClientIntegrationSettingsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        },
+        "security": [
+          {
+            "AdminKey": [ ]
+          }
+        ]
+      }
+    },
     "/api/admin/clients/{clientId}/component-versions/{component}": {
       "put": {
         "tags": [
@@ -1676,6 +1749,14 @@
           },
           "ruDesktopAutoOfferPasswordSetup": {
             "type": "boolean"
+          },
+          "identificationCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "chzToken": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -1803,6 +1884,10 @@
           },
           "hasLmDatabaseBackup": {
             "type": "boolean"
+          },
+          "chzToken": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -2071,6 +2156,20 @@
             "nullable": true
           },
           "keyId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "PutClientIntegrationSettingsRequest": {
+        "type": "object",
+        "properties": {
+          "identificationCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "chzToken": {
             "type": "string",
             "nullable": true
           }

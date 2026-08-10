@@ -96,6 +96,10 @@ public static class DatabaseSchema
                 "TEXT NOT NULL DEFAULT 'LegacySnapshot'", cancellationToken);
             await EnsureColumnAsync(connection, "Licenses", "SignatureVerifiedAtUtc",
                 "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ClientSettings", "IdentificationCode",
+                "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ClientSettings", "ChzToken",
+                "TEXT NULL", cancellationToken);
         }
         finally
         {

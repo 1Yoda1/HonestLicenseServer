@@ -14,6 +14,7 @@ public class Client
     public List<Credential> Credentials { get; set; } = [];
     public List<Device> Devices { get; set; } = [];
     public List<License> Licenses { get; set; } = [];
+    public ClientSetting? Settings { get; set; }
 }
 
 public class Credential
@@ -95,6 +96,8 @@ public class ComponentAsset
 public class ClientSetting
 {
     public int ClientId { get; set; }
+    public string? IdentificationCode { get; set; }
+    public string? ChzToken { get; set; }
     public bool RuDesktopEnabled { get; set; }
     public bool RuDesktopAutoOfferPasswordSetup { get; set; }
     public string? RuDesktopPasswordHash { get; set; }

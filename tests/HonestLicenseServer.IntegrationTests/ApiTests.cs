@@ -124,6 +124,11 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.True(response.StatusCode == HttpStatusCode.OK,
             await response.Content.ReadAsStringAsync());
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var clientConfiguration = json.GetProperty("client");
+        Assert.Equal("integration-password",
+            clientConfiguration.GetProperty("identificationCode").GetString());
+        Assert.StartsWith("integration-chz-token",
+            clientConfiguration.GetProperty("chzToken").GetString());
         var component = json.GetProperty("components").EnumerateArray().Single();
         Assert.Equal("2.6.2.0", component.GetProperty("globalVersion").GetString());
         Assert.Equal("2.5.0", component.GetProperty("effectiveVersion").GetString());
@@ -318,6 +323,36 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal("Rejected", rejectedStatus.GetProperty("status").GetString());
         Assert.Equal(HttpStatusCode.Forbidden,
             (await rejectedDevice.GetAsync("/api/configuration/current")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_can_read_and_update_client_integration_settings()
+    {
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+
+        var initial = await admin.GetFromJsonAsync<JsonElement>(
+            "/api/admin/clients/integration-client/integration-settings");
+        Assert.True(initial.GetProperty("isConfigured").GetBoolean());
+        Assert.Equal("integration-password", initial.GetProperty("identificationCode").GetString());
+        Assert.Equal("integration-chz-token", initial.GetProperty("chzToken").GetString());
+
+        var update = await admin.PutAsJsonAsync(
+            "/api/admin/clients/integration-client/integration-settings",
+            new { identificationCode = "integration-password", chzToken = "integration-chz-token-updated" });
+        Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
+
+        var updated = await admin.GetFromJsonAsync<JsonElement>(
+            "/api/admin/clients/integration-client/integration-settings");
+        Assert.Equal("integration-chz-token-updated", updated.GetProperty("chzToken").GetString());
+
+        using var loginClient = factory.CreateClient();
+        var login = await loginClient.PostAsJsonAsync("/api/auth/login", new
+        {
+            login = "integration-login", password = "integration-password",
+            deviceId = "integration-device", deviceName = "Test Device"
+        });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
     }
 
     [Fact]

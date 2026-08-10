@@ -52,6 +52,7 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
             HasLmDatabaseBackup = request.HasLmDatabaseBackup, CreatedAtUtc = now, UpdatedAtUtc = now };
         client.Credentials.Add(new Credential { Login = request.Login,
             PasswordHash = PasswordHasher.Hash(request.Password), IsActive = true, PasswordChangedAtUtc = now });
+        SetInitialIntegrationSettings(client, request.Password, request.ChzToken);
         db.Clients.Add(client);
         await db.SaveChangesAsync();
         AddAudit("Client.Created", "Client", client.Id.ToString(), client.Id, new { request.ClientId, request.Name });
@@ -315,6 +316,53 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
             .Select(x => new { x.Component, x.RequiredVersion, x.UpdatedAtUtc }).ToListAsync());
     }
 
+    [HttpGet("clients/{clientId}/integration-settings")]
+    public async Task<IActionResult> IntegrationSettings(string clientId)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var value = await db.Clients.AsNoTracking()
+            .Where(x => x.ExternalClientId == clientId)
+            .Select(x => new ClientIntegrationSettingsResponse(
+                x.ExternalClientId,
+                db.ClientSettings.Where(s => s.ClientId == x.Id)
+                    .Select(s => s.IdentificationCode).SingleOrDefault(),
+                db.ClientSettings.Where(s => s.ClientId == x.Id)
+                    .Select(s => s.ChzToken).SingleOrDefault(),
+                db.ClientSettings.Any(s => s.ClientId == x.Id &&
+                    s.IdentificationCode != null && s.ChzToken != null)))
+            .SingleOrDefaultAsync();
+        return value is null ? NotFound(new { error = "client_not_found" }) : Ok(value);
+    }
+
+    [HttpPut("clients/{clientId}/integration-settings")]
+    public async Task<IActionResult> PutIntegrationSettings(string clientId,
+        PutClientIntegrationSettingsRequest request)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var client = await db.Clients.Include(x => x.Credentials)
+            .SingleOrDefaultAsync(x => x.ExternalClientId == clientId);
+        if (client is null) return NotFound(new { error = "client_not_found" });
+
+        var settings = await db.ClientSettings.SingleOrDefaultAsync(x => x.ClientId == client.Id);
+        if (settings is null)
+        {
+            settings = new ClientSetting { ClientId = client.Id };
+            db.ClientSettings.Add(settings);
+        }
+        settings.IdentificationCode = request.IdentificationCode.Trim();
+        settings.ChzToken = request.ChzToken.Trim();
+        foreach (var credential in client.Credentials.Where(x => x.IsActive))
+        {
+            credential.PasswordHash = PasswordHasher.Hash(settings.IdentificationCode);
+            credential.PasswordChangedAtUtc = DateTime.UtcNow;
+        }
+        client.UpdatedAtUtc = DateTime.UtcNow;
+        AddAudit("ClientIntegrationSettings.Updated", "Client", client.Id.ToString(), client.Id,
+            new { identificationCodeChanged = true, chzTokenChanged = true });
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     [HttpPut("clients/{clientId}/component-versions/{component}")]
     public async Task<IActionResult> PutComponentOverride(string clientId, string component,
         PutComponentOverrideRequest request)
@@ -398,9 +446,20 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
             EntityType = type, EntityId = entityId, ClientId = clientId,
             DetailsJson = JsonSerializer.Serialize(details), IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
             CorrelationId = HttpContext.TraceIdentifier });
+
+    private static void SetInitialIntegrationSettings(Client client, string identificationCode, string? chzToken)
+    {
+        // EF sets ClientId when the new client graph is saved.
+        client.Settings = new ClientSetting
+        {
+            IdentificationCode = identificationCode.Trim(),
+            ChzToken = string.IsNullOrWhiteSpace(chzToken) ? null : chzToken.Trim()
+        };
+    }
 }
 
-public record CreateClientRequest(string ClientId, string Name, string Login, string Password, string? Inn, string? Architecture, bool HasLmDatabaseBackup = false);
+public record CreateClientRequest(string ClientId, string Name, string Login, string Password,
+    string? Inn, string? Architecture, bool HasLmDatabaseBackup = false, string? ChzToken = null);
 public record UpdateClientRequest(string Name, string? Inn, string? Architecture, bool IsActive, bool HasLmDatabaseBackup);
 public record CreateDeviceRequest(string ClientId, string DeviceId, string Name, string? Address, string? Comment);
 public record UpdateDeviceRequest(string Name, string? Address, string? Comment, string Status);
