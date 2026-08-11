@@ -241,6 +241,70 @@
         ]
       }
     },
+    "/api/admin/devices/{id}/restore": {
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "Admin_RestoreDevice",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Device restored"
+          },
+          "409": {
+            "description": "DeviceId conflict or device cannot be restored"
+          }
+        },
+        "security": [
+          {
+            "AdminKey": [ ]
+          }
+        ]
+      }
+    },
+    "/api/admin/devices/{id}/release": {
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "Admin_ReleaseDeviceId",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "DeviceId released"
+          },
+          "409": {
+            "description": "Device is not a bound Deleted device"
+          }
+        },
+        "security": [
+          {
+            "AdminKey": [ ]
+          }
+        ]
+      }
+    },
     "/api/admin/licenses": {
       "get": {
         "tags": [
@@ -995,6 +1059,26 @@
           },
           "403": {
             "description": "Forbidden",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
             "content": {
               "text/plain": {
                 "schema": {

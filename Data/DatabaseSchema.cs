@@ -1,3 +1,6 @@
+using System.Data;
+using System.Data.Common;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace HonestLicenseServer.Data;
@@ -110,12 +113,176 @@ public static class DatabaseSchema
                 "TEXT NULL", cancellationToken);
             await EnsureColumnAsync(connection, "DeviceRegistrationRequests", "RequestedHonestFlowVersion",
                 "TEXT NULL", cancellationToken);
+            await EnsureDeviceRegistrationRequestPendingIndexAsync(connection, cancellationToken);
         }
         finally
         {
             if (closeWhenDone) await connection.CloseAsync();
         }
     }
+
+    private static async Task EnsureDeviceRegistrationRequestPendingIndexAsync(
+        DbConnection connection, CancellationToken cancellationToken)
+    {
+        var sqlite = (SqliteConnection)connection;
+        await using var transaction = sqlite.BeginTransaction(
+            IsolationLevel.Serializable, deferred: false);
+
+        var duplicatePending = await FindDuplicatePendingAsync(connection, transaction, cancellationToken);
+        if (duplicatePending is not null)
+        {
+            throw new InvalidOperationException(
+                "DeviceRegistrationRequests migration cannot create the Pending uniqueness index: " +
+                $"ClientId={duplicatePending.Value.ClientId}, " +
+                $"ExternalDeviceId={duplicatePending.Value.ExternalDeviceId} has " +
+                $"{duplicatePending.Value.Count} Pending rows. No data was changed.");
+        }
+
+        List<DatabaseIndex> indexes = await ReadIndexesAsync(
+            connection, transaction, "DeviceRegistrationRequests", cancellationToken);
+        DatabaseIndex[] legacyIndexes = indexes.Where(x => x.Unique &&
+            x.Columns.SequenceEqual(
+                new[] { "ClientId", "ExternalDeviceId", "Status" },
+                StringComparer.OrdinalIgnoreCase)).ToArray();
+
+        if (legacyIndexes.Any(x => string.Equals(x.Origin, "u", StringComparison.OrdinalIgnoreCase)))
+        {
+            await RebuildDeviceRegistrationRequestsAsync(
+                connection, transaction, legacyIndexes, cancellationToken);
+        }
+        else
+        {
+            foreach (DatabaseIndex legacyIndex in legacyIndexes)
+                await ExecuteAsync(connection, transaction,
+                    $"DROP INDEX {QuoteIdentifier(legacyIndex.Name)};", cancellationToken);
+        }
+
+        await ExecuteAsync(connection, transaction, """
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_DeviceRegistrationRequests_OnePending
+            ON DeviceRegistrationRequests(ClientId, ExternalDeviceId)
+            WHERE Status = 'Pending';
+            """, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static async Task RebuildDeviceRegistrationRequestsAsync(
+        DbConnection connection, DbTransaction transaction,
+        IReadOnlyCollection<DatabaseIndex> legacyIndexes,
+        CancellationToken cancellationToken)
+    {
+        var excludedIndexes = legacyIndexes.Select(x => x.Name)
+            .Append("UX_DeviceRegistrationRequests_OnePending")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var schemaObjects = new List<string>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT name, sql
+                FROM sqlite_master
+                WHERE tbl_name = 'DeviceRegistrationRequests'
+                  AND type IN ('index', 'trigger')
+                  AND sql IS NOT NULL
+                ORDER BY type, name;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                string name = reader.GetString(0);
+                if (!excludedIndexes.Contains(name)) schemaObjects.Add(reader.GetString(1));
+            }
+        }
+
+        await ExecuteAsync(connection, transaction, """
+            CREATE TABLE DeviceRegistrationRequests_New (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ClientId INTEGER NOT NULL,
+                ExternalDeviceId TEXT NOT NULL,
+                RequestedName TEXT NOT NULL,
+                Status TEXT NOT NULL CHECK (Status IN ('Pending','Approved','Rejected','Expired')),
+                RequestedAtUtc TEXT NOT NULL,
+                ResolvedAtUtc TEXT NULL,
+                Comment TEXT NULL,
+                RequestedAddress TEXT NULL,
+                RequestedHonestFlowVersion TEXT NULL,
+                FOREIGN KEY (ClientId) REFERENCES Clients(Id) ON DELETE CASCADE
+            );
+            INSERT INTO DeviceRegistrationRequests_New (
+                Id, ClientId, ExternalDeviceId, RequestedName, Status,
+                RequestedAtUtc, ResolvedAtUtc, Comment,
+                RequestedAddress, RequestedHonestFlowVersion)
+            SELECT Id, ClientId, ExternalDeviceId, RequestedName, Status,
+                RequestedAtUtc, ResolvedAtUtc, Comment,
+                RequestedAddress, RequestedHonestFlowVersion
+            FROM DeviceRegistrationRequests;
+            DROP TABLE DeviceRegistrationRequests;
+            ALTER TABLE DeviceRegistrationRequests_New RENAME TO DeviceRegistrationRequests;
+            """, cancellationToken);
+
+        foreach (string sql in schemaObjects)
+            await ExecuteAsync(connection, transaction, sql + ";", cancellationToken);
+    }
+
+    private static async Task<(long ClientId, string ExternalDeviceId, long Count)?> FindDuplicatePendingAsync(
+        DbConnection connection, DbTransaction transaction, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT ClientId, ExternalDeviceId, COUNT(*)
+            FROM DeviceRegistrationRequests
+            WHERE Status = 'Pending'
+            GROUP BY ClientId, ExternalDeviceId
+            HAVING COUNT(*) > 1
+            LIMIT 1;
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return (reader.GetInt64(0), reader.GetString(1), reader.GetInt64(2));
+    }
+
+    private static async Task<List<DatabaseIndex>> ReadIndexesAsync(
+        DbConnection connection, DbTransaction transaction, string table,
+        CancellationToken cancellationToken)
+    {
+        var indexes = new List<(string Name, bool Unique, string Origin)>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = $"PRAGMA index_list({QuoteIdentifier(table)});";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                indexes.Add((reader.GetString(1), reader.GetInt64(2) != 0, reader.GetString(3)));
+        }
+
+        var result = new List<DatabaseIndex>();
+        foreach (var index in indexes)
+        {
+            var columns = new List<string>();
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"PRAGMA index_info({QuoteIdentifier(index.Name)});";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) columns.Add(reader.GetString(2));
+            result.Add(new DatabaseIndex(index.Name, index.Unique, index.Origin, columns));
+        }
+        return result;
+    }
+
+    private static async Task ExecuteAsync(DbConnection connection, DbTransaction transaction,
+        string sql, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static string QuoteIdentifier(string value) =>
+        "\"" + value.Replace("\"", "\"\"") + "\"";
+
+    private sealed record DatabaseIndex(
+        string Name, bool Unique, string Origin, IReadOnlyList<string> Columns);
 
     private static async Task EnsureColumnAsync(System.Data.Common.DbConnection connection,
         string table, string column, string definition, CancellationToken cancellationToken)

@@ -5,6 +5,7 @@ using HonestLicenseServer.Infrastructure;
 using HonestLicenseServer.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace HonestLicenseServer.Controllers;
@@ -21,25 +22,16 @@ public class DeviceController(HonestDbContext db) : ControllerBase
     {
         var clientId = User.ClientId();
         var externalDeviceId = User.ExternalDeviceId();
+        bool hasBoundActiveDevice = await db.Devices.AsNoTracking().AnyAsync(x =>
+            x.ClientId == clientId &&
+            x.ExternalDeviceId == externalDeviceId &&
+            x.Status == "Active");
         var request = await db.DeviceRegistrationRequests.AsNoTracking()
-            .Where(x => x.ClientId == clientId && x.ExternalDeviceId == externalDeviceId)
+            .Where(x => x.ClientId == clientId &&
+                x.ExternalDeviceId == externalDeviceId &&
+                (x.Status != "Approved" || hasBoundActiveDevice))
             .OrderByDescending(x => x.RequestedAtUtc)
             .FirstOrDefaultAsync();
-
-        if (request is not null && request.Status != "Pending" && User.DeviceId() is null)
-        {
-            var deletedDeviceExists = await db.Devices.AsNoTracking().AnyAsync(x =>
-                x.ClientId == clientId && x.ExternalDeviceId == externalDeviceId && x.Status == "Deleted");
-            var sessionCreatedAtUtc = await db.RefreshTokens.AsNoTracking()
-                .Where(x => x.Id == User.SessionId())
-                .Select(x => (DateTime?)x.CreatedAtUtc)
-                .SingleOrDefaultAsync();
-            if (deletedDeviceExists && sessionCreatedAtUtc is not null &&
-                (request.ResolvedAtUtc is null || request.ResolvedAtUtc <= sessionCreatedAtUtc))
-            {
-                request = null;
-            }
-        }
 
         if (request is null && User.DeviceId() is int deviceId)
         {
@@ -71,6 +63,16 @@ public class DeviceController(HonestDbContext db) : ControllerBase
         if (request.DeviceId != externalDeviceId)
             return ApiProblems.Create(HttpContext, StatusCodes.Status400BadRequest,
                 "device_id_does_not_match_token", "Device ID does not match the authenticated session");
+
+        await using var transaction = await DeviceBindingGuard.BeginImmediateWriteAsync(db);
+        if (await DeviceBindingGuard.ConflictsWithAnotherClientAsync(
+                db, clientId, request.DeviceId))
+        {
+            return ApiProblems.Create(HttpContext, StatusCodes.Status409Conflict,
+                DeviceBindingGuard.ErrorCode,
+                "Device is already bound to another client");
+        }
+
         var device = await db.Devices.AsNoTracking().SingleOrDefaultAsync(x =>
             x.ClientId == clientId && x.ExternalDeviceId == request.DeviceId);
         if (device is not null && device.Status != "Deleted")
@@ -81,10 +83,16 @@ public class DeviceController(HonestDbContext db) : ControllerBase
             x.ClientId == clientId && x.ExternalDeviceId == request.DeviceId && x.Status == "Pending");
         if (pending is null)
         {
-            var existing = await db.DeviceRegistrationRequests
-                .Where(x => x.ClientId == clientId && x.ExternalDeviceId == request.DeviceId)
-                .OrderByDescending(x => x.RequestedAtUtc)
-                .FirstOrDefaultAsync();
+            var existing = device is not null
+                ? await db.DeviceRegistrationRequests
+                    .Where(x => x.ClientId == clientId && x.ExternalDeviceId == request.DeviceId)
+                    .OrderByDescending(x => x.RequestedAtUtc)
+                    .FirstOrDefaultAsync()
+                : await db.DeviceRegistrationRequests
+                    .Where(x => x.ClientId == clientId && x.ExternalDeviceId == request.DeviceId &&
+                        x.Status == "Rejected")
+                    .OrderByDescending(x => x.RequestedAtUtc)
+                    .FirstOrDefaultAsync();
             if (existing is not null)
             {
                 existing.RequestedName = request.Name;
@@ -107,8 +115,22 @@ public class DeviceController(HonestDbContext db) : ControllerBase
                     Status = "Pending", RequestedAtUtc = DateTime.UtcNow };
                 db.DeviceRegistrationRequests.Add(pending);
             }
-            await db.SaveChangesAsync();
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException exception) when (
+                exception.InnerException is SqliteException { SqliteErrorCode: 19 })
+            {
+                db.Entry(pending).State = EntityState.Detached;
+                pending = await db.DeviceRegistrationRequests.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.ClientId == clientId &&
+                    x.ExternalDeviceId == request.DeviceId &&
+                    x.Status == "Pending");
+                if (pending is null) throw;
+            }
         }
+        await transaction.CommitAsync();
         return Accepted(new DeviceRegistrationResponse(pending.Id, pending.Status, pending.RequestedAtUtc));
     }
 }

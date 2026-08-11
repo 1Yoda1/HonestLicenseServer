@@ -85,9 +85,26 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (!IsAdmin()) return AdminUnauthorized();
         var query = db.Devices.AsNoTracking().AsQueryable();
         if (!string.IsNullOrWhiteSpace(clientId)) query = query.Where(x => x.Client.ExternalClientId == clientId);
-        return Ok(await query.OrderBy(x => x.Client.Name).ThenBy(x => x.Name).Select(x => new
+        var devices = await query.OrderBy(x => x.Client.Name).ThenBy(x => x.Name).Select(x => new
         { x.Id, clientId = x.Client.ExternalClientId, clientName = x.Client.Name,
-          deviceId = x.ExternalDeviceId, x.Name, x.Address, x.Comment, x.Status, x.RegisteredAtUtc }).ToListAsync());
+          storedDeviceId = x.ExternalDeviceId, x.Name, x.Address, x.Comment, x.Status, x.RegisteredAtUtc }).ToListAsync();
+        return Ok(devices.Select(x =>
+        {
+            bool released = ReleasedDeviceIdentity.TryGetOriginal(x.Id, x.storedDeviceId, out string originalDeviceId);
+            return new
+            {
+                x.Id,
+                x.clientId,
+                x.clientName,
+                deviceId = released ? originalDeviceId : x.storedDeviceId,
+                x.Name,
+                x.Address,
+                x.Comment,
+                x.Status,
+                x.RegisteredAtUtc,
+                deviceIdReleased = released
+            };
+        }));
     }
 
     [HttpPost("devices")]
@@ -96,6 +113,14 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (!IsAdmin()) return AdminUnauthorized();
         var client = await db.Clients.SingleOrDefaultAsync(x => x.ExternalClientId == request.ClientId);
         if (client is null) return NotFound(new { error = "client_not_found" });
+
+        await using var transaction = await DeviceBindingGuard.BeginImmediateWriteAsync(db);
+        if (await DeviceBindingGuard.ConflictsWithAnotherClientAsync(
+                db, client.Id, request.DeviceId))
+            return ApiProblems.Create(HttpContext, StatusCodes.Status409Conflict,
+                DeviceBindingGuard.ErrorCode,
+                "Device is already bound to another client");
+
         if (await db.Devices.AnyAsync(x => x.ClientId == client.Id && x.ExternalDeviceId == request.DeviceId))
             return Conflict(new { error = "device_exists" });
         var device = new Device { ClientId = client.Id, ExternalDeviceId = request.DeviceId,
@@ -104,6 +129,7 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         db.Devices.Add(device); await db.SaveChangesAsync();
         AddAudit("Device.Created", "Device", device.Id.ToString(), client.Id, new { request.DeviceId });
         await db.SaveChangesAsync();
+        await transaction.CommitAsync();
         return Created($"/api/admin/devices/{device.Id}", new { device.Id });
     }
 
@@ -124,17 +150,89 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         await db.SaveChangesAsync(); return NoContent();
     }
 
+    [HttpPut("devices/{id:int}/restore")]
+    public async Task<IActionResult> RestoreDevice(int id)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        await using var transaction = await DeviceBindingGuard.BeginImmediateWriteAsync(db);
+        var device = await db.Devices.SingleOrDefaultAsync(x => x.Id == id);
+        if (device is null) return NotFound(new { error = "device_not_found" });
+        if (device.Status != "Deleted") return Conflict(new { error = "device_not_deleted" });
+        if (ReleasedDeviceIdentity.TryGetOriginal(device.Id, device.ExternalDeviceId, out _))
+            return Conflict(new { error = "device_id_released" });
+        if (await DeviceBindingGuard.ConflictsWithAnotherClientAsync(
+                db, device.ClientId, device.ExternalDeviceId))
+            return ApiProblems.Create(HttpContext, StatusCodes.Status409Conflict,
+                DeviceBindingGuard.ErrorCode,
+                "Device is already bound to another client");
+
+        device.Status = "Active";
+        AddAudit("Device.Restored", "Device", id.ToString(), device.ClientId,
+            new { device.ExternalDeviceId });
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        return NoContent();
+    }
+
+    [HttpPut("devices/{id:int}/release")]
+    public async Task<IActionResult> ReleaseDeviceId(int id)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        await using var transaction = await DeviceBindingGuard.BeginImmediateWriteAsync(db);
+        var device = await db.Devices.SingleOrDefaultAsync(x => x.Id == id);
+        if (device is null) return NotFound(new { error = "device_not_found" });
+        if (device.Status != "Deleted") return Conflict(new { error = "device_not_deleted" });
+        if (ReleasedDeviceIdentity.TryGetOriginal(device.Id, device.ExternalDeviceId, out _))
+            return Conflict(new { error = "device_id_already_released" });
+
+        string oldExternalDeviceId = device.ExternalDeviceId;
+        device.ExternalDeviceId = ReleasedDeviceIdentity.Create(device.Id, oldExternalDeviceId);
+        var sessions = await db.RefreshTokens.Where(x => x.RevokedAtUtc == null &&
+            (x.DeviceId == id ||
+             (x.ClientId == device.ClientId && x.RequestedExternalDeviceId == oldExternalDeviceId)))
+            .ToListAsync();
+        foreach (var session in sessions)
+        {
+            session.RevokedAtUtc = DateTime.UtcNow;
+            session.RevokeReason = "device_id_released";
+        }
+        AddAudit("Device.ExternalIdReleased", "Device", id.ToString(), device.ClientId,
+            new { oldExternalDeviceId, archivedExternalDeviceId = device.ExternalDeviceId });
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        return NoContent();
+    }
+
     [HttpGet("licenses")]
     public async Task<IActionResult> Licenses([FromQuery] string? clientId = null)
     {
         if (!IsAdmin()) return AdminUnauthorized();
         var query = db.Licenses.AsNoTracking().AsQueryable();
         if (!string.IsNullOrWhiteSpace(clientId)) query = query.Where(x => x.Client.ExternalClientId == clientId);
-        return Ok(await query.OrderByDescending(x => x.Revision).Select(x => new
+        var licenses = await query.OrderByDescending(x => x.Revision).Select(x => new
         { x.Id, clientId = x.Client.ExternalClientId, clientName = x.Client.Name,
-          deviceId = x.Device.ExternalDeviceId, x.Revision, x.KeyId, x.SignatureScope,
+          deviceDatabaseId = x.Device.Id, storedDeviceId = x.Device.ExternalDeviceId,
+          x.Revision, x.KeyId, x.SignatureScope,
           x.SignatureVerifiedAtUtc, x.Status,
-          x.IssuedAtUtc, x.ValidUntilUtc, hasSignature = x.SignatureBase64 != "" }).ToListAsync());
+          x.IssuedAtUtc, x.ValidUntilUtc, hasSignature = x.SignatureBase64 != "" }).ToListAsync();
+        return Ok(licenses.Select(x => new
+        {
+            x.Id,
+            x.clientId,
+            x.clientName,
+            deviceId = ReleasedDeviceIdentity.TryGetOriginal(
+                x.deviceDatabaseId, x.storedDeviceId, out string originalDeviceId)
+                ? originalDeviceId
+                : x.storedDeviceId,
+            x.Revision,
+            x.KeyId,
+            x.SignatureScope,
+            x.SignatureVerifiedAtUtc,
+            x.Status,
+            x.IssuedAtUtc,
+            x.ValidUntilUtc,
+            x.hasSignature
+        }));
     }
 
     [HttpGet("licenses/{id:int}")]
@@ -142,11 +240,23 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
     {
         if (!IsAdmin()) return AdminUnauthorized();
         var value = await db.Licenses.AsNoTracking().Where(x => x.Id == id).Select(x => new
-        { x.Id, clientId = x.Client.ExternalClientId, deviceId = x.Device.ExternalDeviceId,
+        { x.Id, clientId = x.Client.ExternalClientId, deviceDatabaseId = x.Device.Id,
+          storedDeviceId = x.Device.ExternalDeviceId,
           x.Revision, x.GrantJson, x.SignatureBase64, x.KeyId, x.SignatureScope,
           x.SignatureVerifiedAtUtc, x.Status,
           x.IssuedAtUtc, x.ValidUntilUtc, x.PublishedAtUtc }).SingleOrDefaultAsync();
-        return value is null ? NotFound(new { error = "license_not_found" }) : Ok(value);
+        if (value is null) return NotFound(new { error = "license_not_found" });
+        string deviceId = ReleasedDeviceIdentity.TryGetOriginal(
+            value.deviceDatabaseId, value.storedDeviceId, out string originalDeviceId)
+            ? originalDeviceId
+            : value.storedDeviceId;
+        return Ok(new
+        {
+            value.Id, value.clientId, deviceId, value.Revision, value.GrantJson,
+            value.SignatureBase64, value.KeyId, value.SignatureScope,
+            value.SignatureVerifiedAtUtc, value.Status, value.IssuedAtUtc,
+            value.ValidUntilUtc, value.PublishedAtUtc
+        });
     }
 
     [HttpPost("licenses")]
@@ -235,9 +345,16 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
     public async Task<IActionResult> ApproveDeviceRequest(int id, ResolveDeviceRequest request)
     {
         if (!IsAdmin()) return AdminUnauthorized();
+        await using var transaction = await DeviceBindingGuard.BeginImmediateWriteAsync(db);
         var pending = await db.DeviceRegistrationRequests.SingleOrDefaultAsync(x => x.Id == id);
         if (pending is null) return NotFound(new { error = "device_request_not_found" });
         if (pending.Status != "Pending") return Conflict(new { error = "device_request_already_resolved" });
+        if (await DeviceBindingGuard.ConflictsWithAnotherClientAsync(
+                db, pending.ClientId, pending.ExternalDeviceId))
+            return ApiProblems.Create(HttpContext, StatusCodes.Status409Conflict,
+                DeviceBindingGuard.ErrorCode,
+                "Device is already bound to another client");
+
         var device = await db.Devices.SingleOrDefaultAsync(x => x.ClientId == pending.ClientId && x.ExternalDeviceId == pending.ExternalDeviceId);
         if (device is null)
         {
@@ -264,7 +381,9 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
             x.RequestedExternalDeviceId == pending.ExternalDeviceId && x.DeviceId == null && x.RevokedAtUtc == null).ToListAsync();
         foreach (var session in sessions) session.DeviceId = device.Id;
         AddAudit("DeviceRequest.Approved", "DeviceRegistrationRequest", id.ToString(), pending.ClientId, new { device.Id });
-        await db.SaveChangesAsync(); return Ok(new { device.Id });
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        return Ok(new { device.Id });
     }
 
     [HttpPut("device-requests/{id:int}/reject")]

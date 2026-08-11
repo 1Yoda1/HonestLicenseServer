@@ -93,8 +93,8 @@ X-Admin-Key: ADMIN_KEY
 ```text
 1. HonestFlow создаёт постоянный deviceId установки.
 2. Отправляет password + deviceId в POST /api/auth/login.
-3. Для известного активного устройства получает обычную сессию.
-4. Для неизвестного устройства или устройства со статусом `Deleted` получает ограниченную сессию и
+3. Для известного активного устройства, принадлежащего этому клиенту, получает обычную сессию.
+4. Для неизвестного устройства или устройства этого же клиента со статусом `Deleted` получает ограниченную сессию и
    deviceRegistrationRequired=true.
 5. HonestFlow берёт имя устройства из `Environment.MachineName` и спрашивает у
    пользователя только физический адрес точки.
@@ -137,7 +137,8 @@ Rate limit:
 - ищет `password` в `ClientSettings.IdentificationCode`;
 - дополнительно проверяет PBKDF2-хеш в `Credentials.PasswordHash`;
 - проверяет `Clients.IsActive`;
-- ищет устройство по `Clients.Id + Devices.ExternalDeviceId`.
+- проверяет глобальную привязку `Devices.ExternalDeviceId` и активные Pending-заявки;
+- затем ищет устройство текущего клиента по `Clients.Id + Devices.ExternalDeviceId`.
 
 Что сохраняет:
 
@@ -162,8 +163,12 @@ Rate limit:
 `deviceRegistrationRequired` равен `true`. `Disabled` по-прежнему получает
 `403 device_disabled` и не может начать повторную регистрацию.
 
+Если `deviceId` уже принадлежит другому клиенту либо имеет его Pending-заявку,
+сервер возвращает `409 device_bound_to_another_client`, не создаёт сессию и не
+запускает новый registration flow.
+
 Ошибки: `400`, `401 invalid_credentials`, `403 client_disabled`,
-`403 device_disabled`, `429 rate_limit_exceeded`.
+`403 device_disabled`, `409 device_bound_to_another_client`, `429 rate_limit_exceeded`.
 
 ### POST `/api/auth/refresh`
 
@@ -251,10 +256,29 @@ Rate limit: 30 запросов в минуту с одного IP.
 }
 ```
 
-Для `Deleted` Device существующая завершённая заявка повторно переводится в
-`Pending` с новыми name/address/version; сама строка Device до Approve остаётся
-`Deleted`. Ошибки: `400 device_id_does_not_match_token`,
+Для обычного `Deleted` Device с ещё bound DeviceId существующая завершённая
+заявка повторно переводится в `Pending` с новыми name/address/version; сама
+строка Device до Approve остаётся `Deleted`. После административного Release
+DeviceId старая `Approved` заявка считается историей и не переписывается: для
+освобождённого настоящего DeviceId создаётся отдельная `Pending` заявка.
+`Rejected` заявка переоткрывается в `Pending`. Ошибки: `400 device_id_does_not_match_token`,
 `409 device_already_registered`, `401`, `403`.
+
+DB-инвариант: исторических `Approved`/`Rejected` строк для одной пары
+`ClientId + ExternalDeviceId` может быть несколько, но актуальная `Pending`
+может быть только одна. Это обеспечивается partial unique index
+`UX_DeviceRegistrationRequests_OnePending`:
+
+```sql
+CREATE UNIQUE INDEX UX_DeviceRegistrationRequests_OnePending
+ON DeviceRegistrationRequests(ClientId, ExternalDeviceId)
+WHERE Status = 'Pending';
+```
+
+Schema updater заменяет старый table-level `UNIQUE
+(ClientId, ExternalDeviceId, Status)` без удаления истории. При обнаружении
+двух существующих `Pending` для одной пары migration завершается с диагностикой
+до изменения таблицы.
 
 ### GET `/api/device/registration/current`
 
@@ -262,8 +286,10 @@ Rate limit: 30 запросов в минуту с одного IP.
 
 Авторизация: Bearer активного клиента.
 
-Откуда берёт: `DeviceRegistrationRequests`; если заявки нет, но устройство
-уже зарегистрировано — `Devices`.
+Откуда берёт: текущую `Pending`/`Rejected` заявку из
+`DeviceRegistrationRequests`; `Approved` допустим только когда существует
+точно совпадающий `Active` Device. Если заявки нет, но устройство уже
+зарегистрировано — `Devices`.
 
 Ответ `200`:
 
@@ -277,8 +303,9 @@ Rate limit: 30 запросов в минуту с одного IP.
 }
 ```
 
-Статусы: `Pending`, `Approved`, `Rejected`. Если нет ни устройства, ни заявки:
-`404 device_request_not_found`.
+Статусы: `Pending`, `Approved`, `Rejected`. Историческая `Approved` заявка
+после Release DeviceId не подтверждает новую регистрацию: без новой
+`Pending`/`Rejected` заявки ответом будет `404 device_request_not_found`.
 
 ## 6. Конфигурация HonestFlow
 
@@ -633,6 +660,7 @@ PBKDF2-хеш во всех активных `Credentials` клиента. `chzT
     "address": "Омск, ул. Советская, 31",
     "comment": null,
     "status": "Active",
+    "deviceIdReleased": false,
     "registeredAtUtc": "2026-08-10T12:00:00Z"
   }
 ]
@@ -667,6 +695,26 @@ PBKDF2-хеш во всех активных `Credentials` клиента. `chzT
 
 Допустимые статусы: `Active`, `Disabled`, `Deleted`. При любом статусе кроме
 `Active` отзывает активные сессии устройства. Ответ `204`.
+
+### PUT `/api/admin/devices/{id}/restore`
+
+Восстанавливает только обычное soft-deleted устройство: `Deleted` → `Active`,
+сохраняя строку `Devices`, её `Id` и историю. Перед восстановлением повторно
+проверяет глобальную привязку `ExternalDeviceId`; конфликт с другим клиентом
+возвращает `409 device_bound_to_another_client`. Освобождённый DeviceId этой
+операцией восстановить нельзя. Лицензии автоматически не активируются.
+
+### PUT `/api/admin/devices/{id}/release`
+
+Освобождает настоящий `ExternalDeviceId` только у устройства со статусом
+`Deleted`. Историческая строка остаётся `Deleted`, а хранимый identity принимает
+вид `released-{internalDeviceId}-{oldExternalDeviceId}`. Старое значение
+возвращается административным GET как `deviceId` вместе с
+`deviceIdReleased: true`, чтобы история оставалась читаемой в UI. Связанные
+лицензии и registration history не удаляются, активные сессии отзываются,
+`AuditEvent` содержит старый DeviceId. После этого исходный DeviceId может пройти
+обычную регистрацию у другого клиента. Это безопасная операция для переноса;
+прямая смена `Devices.ClientId` не выполняется.
 
 ### GET `/api/admin/device-requests?status=Pending`
 

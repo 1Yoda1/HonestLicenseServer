@@ -22,6 +22,7 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
     [ProducesResponseType<TokenResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<TokenResponse>> Login(LoginRequest request)
     {
@@ -44,6 +45,15 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
 
         loginLimiter.Reset(attemptKey);
 
+        await using var transaction = await DeviceBindingGuard.BeginImmediateWriteAsync(db);
+        if (await DeviceBindingGuard.ConflictsWithAnotherClientAsync(
+                db, credential.ClientId, request.DeviceId))
+        {
+            return ApiProblems.Create(HttpContext, StatusCodes.Status409Conflict,
+                DeviceBindingGuard.ErrorCode,
+                "Device is already bound to another client");
+        }
+
         var device = await db.Devices.SingleOrDefaultAsync(x =>
             x.ClientId == credential.ClientId && x.ExternalDeviceId == request.DeviceId);
         if (device is not null && device.Status is not ("Active" or "Deleted"))
@@ -54,6 +64,7 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
         var pair = CreateSession(credential.ClientId, registrationRequired ? null : device?.Id,
             request.DeviceId, null);
         await db.SaveChangesAsync();
+        await transaction.CommitAsync();
         return Ok(new TokenResponse(
             pair.AccessToken, pair.RefreshToken, 900, registrationRequired,
             credential.Client.ExternalClientId, credential.Client.Name));

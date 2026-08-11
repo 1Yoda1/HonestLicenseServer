@@ -32,6 +32,11 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
         b.Entity<ComponentAsset>().HasIndex(x => new { x.Component, x.Version, x.Architecture }).IsUnique();
         b.Entity<ClientSetting>().HasKey(x => x.ClientId);
         b.Entity<LicensePolicy>().HasKey(x => x.ClientId);
+        b.Entity<DeviceRegistrationRequest>()
+            .HasIndex(x => new { x.ClientId, x.ExternalDeviceId })
+            .HasDatabaseName("UX_DeviceRegistrationRequests_OnePending")
+            .IsUnique()
+            .HasFilter("Status = 'Pending'");
         b.Entity<RefreshToken>().HasIndex(x => x.AccessTokenHash).IsUnique();
         b.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
         b.Entity<SupportRequest>().HasIndex(x => new { x.Status, x.CreatedAtUtc });
