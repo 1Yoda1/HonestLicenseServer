@@ -495,6 +495,56 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         return value is null ? NotFound(new { error = "client_not_found" }) : Ok(value);
     }
 
+    [HttpGet("clients/{clientId}/license-policy")]
+    public async Task<IActionResult> LicensePolicy(string clientId)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var value = await db.Clients.AsNoTracking()
+            .Where(x => x.ExternalClientId == clientId)
+            .Select(x => new ClientLicensePolicyResponse(
+                x.ExternalClientId,
+                db.LicensePolicies.Where(p => p.ClientId == x.Id)
+                    .Select(p => (bool?)p.IsEnabled).SingleOrDefault()))
+            .SingleOrDefaultAsync();
+        return value is null ? NotFound(new { error = "client_not_found" }) : Ok(value);
+    }
+
+    [HttpPut("clients/{clientId}/license-policy")]
+    public async Task<IActionResult> PutLicensePolicy(string clientId,
+        PutClientLicensePolicyRequest request)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var client = await db.Clients.SingleOrDefaultAsync(x => x.ExternalClientId == clientId);
+        if (client is null) return NotFound(new { error = "client_not_found" });
+
+        var policy = await db.LicensePolicies.SingleOrDefaultAsync(x => x.ClientId == client.Id);
+        bool? previousValue = policy?.IsEnabled;
+        bool created = policy is null;
+        if (policy is null)
+        {
+            policy = new LicensePolicy
+            {
+                ClientId = client.Id,
+                IsEnabled = request.IsEnabled,
+                MinimumHonestFlowVersion = null,
+                OfflineGraceHours = 0,
+                SourceRevision = 0,
+                SourceIssuedAtUtc = DateTime.UtcNow,
+                SourceValidUntilUtc = DateTime.MaxValue
+            };
+            db.LicensePolicies.Add(policy);
+        }
+        else
+        {
+            policy.IsEnabled = request.IsEnabled;
+        }
+
+        AddAudit("ClientLicensePolicy.Updated", "LicensePolicy", client.Id.ToString(), client.Id,
+            new { previousIsEnabled = previousValue, request.IsEnabled, created });
+        await db.SaveChangesAsync();
+        return Ok(new ClientLicensePolicyResponse(client.ExternalClientId, policy.IsEnabled));
+    }
+
     [HttpPut("clients/{clientId}/integration-settings")]
     public async Task<IActionResult> PutIntegrationSettings(string clientId,
         PutClientIntegrationSettingsRequest request)

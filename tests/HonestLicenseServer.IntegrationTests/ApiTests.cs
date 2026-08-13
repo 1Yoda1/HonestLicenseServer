@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text;
 using HonestLicenseServer.Data;
 using HonestLicenseServer.Infrastructure;
+using HonestLicenseServer.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -159,6 +160,27 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
     [Fact]
     public async Task Signed_grant_supports_etag_and_revocation()
     {
+        int registrationHistoryId;
+        await using (var setupScope = factory.Services.CreateAsyncScope())
+        {
+            var db = setupScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            int clientId = await db.Clients.Where(x => x.ExternalClientId == "integration-client")
+                .Select(x => x.Id).SingleAsync();
+            var history = new HonestLicenseServer.Models.DeviceRegistrationRequest
+            {
+                ClientId = clientId,
+                ExternalDeviceId = "integration-device",
+                RequestedName = "Test Device",
+                RequestedAddress = "Test address",
+                Status = "Approved",
+                RequestedAtUtc = DateTime.UtcNow.AddDays(-2),
+                ResolvedAtUtc = DateTime.UtcNow.AddDays(-1)
+            };
+            db.DeviceRegistrationRequests.Add(history);
+            await db.SaveChangesAsync();
+            registrationHistoryId = history.Id;
+        }
+
         var grantBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
             revision = 1001,
@@ -198,10 +220,24 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
 
         var revoke = await admin.PutAsync($"/api/admin/licenses/{licenseId}/revoke", null);
         Assert.Equal(HttpStatusCode.NoContent, revoke.StatusCode);
+        var repeatedRevoke = await admin.PutAsync($"/api/admin/licenses/{licenseId}/revoke", null);
+        Assert.Equal(HttpStatusCode.NoContent, repeatedRevoke.StatusCode);
         var revoked = await honestFlow.GetAsync("/api/license/current");
         Assert.Equal(HttpStatusCode.Gone, revoked.StatusCode);
         var revokedProblem = await revoked.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("license_revoked", revokedProblem.GetProperty("code").GetString());
+
+        await using (var verificationScope = factory.Services.CreateAsyncScope())
+        {
+            var db = verificationScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            var stored = await db.Licenses.SingleAsync(x => x.Id == licenseId);
+            Assert.Equal("Revoked", stored.Status);
+            Assert.True(await db.Clients.AnyAsync(x => x.ExternalClientId == "integration-client"));
+            Assert.True(await db.Devices.AnyAsync(x => x.ExternalDeviceId == "integration-device"));
+            Assert.True(await db.DeviceRegistrationRequests.AnyAsync(x => x.Id == registrationHistoryId));
+            Assert.True(await db.AuditEvents.AnyAsync(x =>
+                x.Action == "License.Revoked" && x.EntityId == licenseId.ToString()));
+        }
 
         var expiredBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
@@ -317,6 +353,302 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, afterLogout.StatusCode);
 
         Assert.NotEqual(accessToken, refreshedAccess);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Login_ReturnsCurrentLicensePolicyEnabledState(bool enabled)
+    {
+        await SetLicensePolicyAsync(enabled);
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            password = "integration-password", deviceId = "integration-device"
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(enabled, body.GetProperty("licensePolicyEnabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Login_WithoutLicensePolicy_ReturnsNullPolicyMetadata()
+    {
+        await SetLicensePolicyAsync(null);
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            password = "integration-password", deviceId = "integration-device"
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("licensePolicyEnabled").ValueKind);
+    }
+
+    [Fact]
+    public async Task Refresh_ReturnsUpdatedLicensePolicyRatherThanLoginMetadata()
+    {
+        await SetLicensePolicyAsync(true);
+        using var client = factory.CreateClient();
+        var login = await client.PostAsJsonAsync("/api/auth/login", new
+        {
+            password = "integration-password", deviceId = "integration-device"
+        });
+        var loginBody = await login.Content.ReadFromJsonAsync<JsonElement>();
+        string refreshToken = loginBody.GetProperty("refreshToken").GetString()!;
+
+        await SetLicensePolicyAsync(false);
+        var refresh = await client.PostAsJsonAsync("/api/auth/refresh", new { refreshToken });
+
+        Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+        var refreshBody = await refresh.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(refreshBody.GetProperty("licensePolicyEnabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Admin_policy_toggle_controls_unknown_device_login_and_preserves_history()
+    {
+        string suffix = Guid.NewGuid().ToString("N");
+        string externalClientId = "policy-client-" + suffix;
+        string password = "policy-password-" + suffix;
+        int clientDatabaseId;
+        int existingSessionId;
+        int operatorGrantId;
+
+        await using (var setupScope = factory.Services.CreateAsyncScope())
+        {
+            var db = setupScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            var now = DateTime.UtcNow;
+            var client = new Client
+            {
+                ExternalClientId = externalClientId,
+                Name = "Policy Test Client",
+                IsActive = true,
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            };
+            var device = new Device
+            {
+                Client = client,
+                ExternalDeviceId = "known-" + suffix,
+                Name = "Known policy device",
+                Status = "Active",
+                RegisteredAtUtc = now
+            };
+            db.AddRange(client, device);
+            await db.SaveChangesAsync();
+            clientDatabaseId = client.Id;
+
+            db.Credentials.Add(new Credential
+            {
+                ClientId = client.Id,
+                Login = "policy-login-" + suffix,
+                PasswordHash = PasswordHasher.Hash(password),
+                IsActive = true,
+                PasswordChangedAtUtc = now
+            });
+            db.ClientSettings.Add(new ClientSetting
+            {
+                ClientId = client.Id,
+                IdentificationCode = password
+            });
+            db.LicensePolicies.Add(new LicensePolicy
+            {
+                ClientId = client.Id,
+                IsEnabled = true,
+                OfflineGraceHours = 72,
+                SourceRevision = 1,
+                SourceIssuedAtUtc = now,
+                SourceValidUntilUtc = now.AddYears(1)
+            });
+            db.DeviceRegistrationRequests.Add(new DeviceRegistrationRequest
+            {
+                ClientId = client.Id,
+                ExternalDeviceId = device.ExternalDeviceId,
+                RequestedName = device.Name,
+                Status = "Approved",
+                RequestedAtUtc = now.AddDays(-1),
+                ResolvedAtUtc = now
+            });
+            var existingSession = new RefreshToken
+            {
+                ClientId = client.Id,
+                DeviceId = device.Id,
+                RequestedExternalDeviceId = device.ExternalDeviceId,
+                AccessTokenHash = TokenHelper.Hash("policy-access-" + suffix),
+                AccessTokenExpiresAtUtc = now.AddHours(1),
+                TokenHash = TokenHelper.Hash("policy-refresh-" + suffix),
+                TokenFamilyId = Guid.NewGuid().ToString(),
+                CreatedAtUtc = now,
+                ExpiresAtUtc = now.AddDays(1)
+            };
+            db.RefreshTokens.Add(existingSession);
+            byte[] operatorGrantBytes = Encoding.UTF8.GetBytes("{\"operatorDevice\":true}");
+            var operatorGrant = new License
+            {
+                ClientId = client.Id,
+                DeviceId = device.Id,
+                Revision = now.Ticks,
+                GrantJson = Encoding.UTF8.GetString(operatorGrantBytes),
+                GrantBytes = operatorGrantBytes,
+                SignatureBase64 = "test-history-signature",
+                KeyId = "test-history-key",
+                SignatureScope = "PersonalGrant",
+                Status = "Superseded",
+                IssuedAtUtc = now.AddDays(-2),
+                ValidUntilUtc = now.AddDays(30),
+                PublishedAtUtc = now.AddDays(-2)
+            };
+            db.Licenses.Add(operatorGrant);
+            await db.SaveChangesAsync();
+            existingSessionId = existingSession.Id;
+            operatorGrantId = operatorGrant.Id;
+        }
+
+        try
+        {
+            using var admin = factory.CreateClient();
+            admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+
+            var initial = await admin.GetFromJsonAsync<JsonElement>(
+                $"/api/admin/clients/{externalClientId}/license-policy");
+            Assert.True(initial.GetProperty("isEnabled").GetBoolean());
+
+            var disable = await admin.PutAsJsonAsync(
+                $"/api/admin/clients/{externalClientId}/license-policy",
+                new { isEnabled = false });
+            Assert.Equal(HttpStatusCode.OK, disable.StatusCode);
+            await AssertPolicyAndHistoryAsync(false, expectExistingSessionRevoked: false);
+
+            using var honestFlow = factory.CreateClient();
+            var disabledLogin = await honestFlow.PostAsJsonAsync("/api/auth/login", new
+            {
+                password,
+                deviceId = "unknown-disabled-" + suffix
+            });
+            Assert.Equal(HttpStatusCode.OK, disabledLogin.StatusCode);
+            var disabledBody = await disabledLogin.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.True(disabledBody.GetProperty("deviceRegistrationRequired").GetBoolean());
+            Assert.False(disabledBody.GetProperty("licensePolicyEnabled").GetBoolean());
+
+            var enable = await admin.PutAsJsonAsync(
+                $"/api/admin/clients/{externalClientId}/license-policy",
+                new { isEnabled = true });
+            Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
+            await AssertPolicyAndHistoryAsync(true, expectExistingSessionRevoked: false);
+
+            var enabledLogin = await honestFlow.PostAsJsonAsync("/api/auth/login", new
+            {
+                password,
+                deviceId = "unknown-enabled-" + suffix
+            });
+            Assert.Equal(HttpStatusCode.OK, enabledLogin.StatusCode);
+            var enabledBody = await enabledLogin.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.True(enabledBody.GetProperty("deviceRegistrationRequired").GetBoolean());
+            Assert.True(enabledBody.GetProperty("licensePolicyEnabled").GetBoolean());
+
+            await using var auditScope = factory.Services.CreateAsyncScope();
+            var auditDb = auditScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            Assert.Equal(2, await auditDb.AuditEvents.CountAsync(x =>
+                x.ClientId == clientDatabaseId && x.Action == "ClientLicensePolicy.Updated"));
+        }
+        finally
+        {
+            await using var cleanupScope = factory.Services.CreateAsyncScope();
+            var db = cleanupScope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            db.AuditEvents.RemoveRange(db.AuditEvents.Where(x => x.ClientId == clientDatabaseId));
+            db.RefreshTokens.RemoveRange(db.RefreshTokens.Where(x => x.ClientId == clientDatabaseId));
+            db.Licenses.RemoveRange(db.Licenses.Where(x => x.ClientId == clientDatabaseId));
+            db.DeviceRegistrationRequests.RemoveRange(db.DeviceRegistrationRequests.Where(x => x.ClientId == clientDatabaseId));
+            db.LicensePolicies.RemoveRange(db.LicensePolicies.Where(x => x.ClientId == clientDatabaseId));
+            db.ClientSettings.RemoveRange(db.ClientSettings.Where(x => x.ClientId == clientDatabaseId));
+            db.Credentials.RemoveRange(db.Credentials.Where(x => x.ClientId == clientDatabaseId));
+            db.Devices.RemoveRange(db.Devices.Where(x => x.ClientId == clientDatabaseId));
+            db.Clients.RemoveRange(db.Clients.Where(x => x.Id == clientDatabaseId));
+            await db.SaveChangesAsync();
+        }
+
+        async Task AssertPolicyAndHistoryAsync(bool expectedPolicy, bool expectExistingSessionRevoked)
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            Assert.Equal(expectedPolicy,
+                (await db.LicensePolicies.SingleAsync(x => x.ClientId == clientDatabaseId)).IsEnabled);
+            Assert.True(await db.Clients.AnyAsync(x => x.Id == clientDatabaseId));
+            Assert.True(await db.ClientSettings.AnyAsync(x => x.ClientId == clientDatabaseId));
+            Assert.True(await db.Devices.AnyAsync(x => x.ClientId == clientDatabaseId));
+            Assert.True(await db.DeviceRegistrationRequests.AnyAsync(x => x.ClientId == clientDatabaseId));
+            Assert.True(await db.Licenses.AnyAsync(x => x.Id == operatorGrantId));
+            var session = await db.RefreshTokens.SingleAsync(x => x.Id == existingSessionId);
+            Assert.Equal(expectExistingSessionRevoked, session.RevokedAtUtc is not null);
+        }
+    }
+
+    [Fact]
+    public async Task Admin_policy_put_creates_missing_row_and_is_idempotent()
+    {
+        await SetLicensePolicyAsync(null);
+        try
+        {
+            using var admin = factory.CreateClient();
+            admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+
+            var legacy = await admin.GetFromJsonAsync<JsonElement>(
+                "/api/admin/clients/integration-client/license-policy");
+            Assert.Equal(JsonValueKind.Null, legacy.GetProperty("isEnabled").ValueKind);
+
+            var first = await admin.PutAsJsonAsync(
+                "/api/admin/clients/integration-client/license-policy",
+                new { isEnabled = false });
+            var repeated = await admin.PutAsJsonAsync(
+                "/api/admin/clients/integration-client/license-policy",
+                new { isEnabled = false });
+            Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
+
+            await using var scope = factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            int clientId = await db.Clients.Where(x => x.ExternalClientId == "integration-client")
+                .Select(x => x.Id).SingleAsync();
+            var policy = await db.LicensePolicies.SingleAsync(x => x.ClientId == clientId);
+            Assert.False(policy.IsEnabled);
+            Assert.Equal(0, policy.SourceRevision);
+        }
+        finally
+        {
+            await SetLicensePolicyAsync(true);
+        }
+    }
+
+    private async Task SetLicensePolicyAsync(bool? enabled)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+        int clientId = await db.Clients.Where(x => x.ExternalClientId == "integration-client")
+            .Select(x => x.Id).SingleAsync();
+        var policy = await db.LicensePolicies.FindAsync(clientId);
+        if (enabled is null)
+        {
+            if (policy is not null)
+                db.LicensePolicies.Remove(policy);
+        }
+        else if (policy is null)
+        {
+            db.LicensePolicies.Add(new HonestLicenseServer.Models.LicensePolicy
+            {
+                ClientId = clientId, IsEnabled = enabled.Value, MinimumHonestFlowVersion = "0.0.0",
+                SourceRevision = 1, SourceIssuedAtUtc = DateTime.UtcNow, SourceValidUntilUtc = DateTime.UtcNow.AddDays(1)
+            });
+        }
+        else
+        {
+            policy.IsEnabled = enabled.Value;
+        }
+        await db.SaveChangesAsync();
     }
 
     [Fact]

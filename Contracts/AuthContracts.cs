@@ -15,7 +15,8 @@ public sealed record TokenResponse(
     int ExpiresInSeconds,
     bool DeviceRegistrationRequired,
     string ClientId,
-    string ClientName);
+    string ClientName,
+    bool? LicensePolicyEnabled);
 
 public sealed record DeviceRegistrationRequestDto(
     [Required, StringLength(128, MinimumLength = 1)] string DeviceId,

@@ -61,7 +61,14 @@
   сохраняются как история (`Superseded`, `Revoked`, `Expired`).
 - HonestFlow кэширует исходный grant и подпись, проверяет ECDSA локально и может
   работать offline только до подписанного `validUntilUtc`.
-- Критические license policy находятся внутри подписанного grant.
+- `LicensePolicies.IsEnabled` — единственный административный source of truth
+  для client-level доступа HonestFlow при online startup.
+- `ClientEnabled` остаётся внутри подписанного grant как совместимый offline/legacy
+  snapshot и при новой публикации автоматически вычисляется из
+  `LicensePolicies.IsEnabled` (`null` означает legacy allow). Это не отдельный
+  административный переключатель.
+- Device entitlement, features, срок действия, offline grace и остальные
+  device-level ограничения остаются внутри подписанного grant.
 
 ## Отложено
 

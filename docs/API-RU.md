@@ -628,6 +628,33 @@ Rate limit: 5 заявок за 10 минут с одного IP. Максима
 
 Ответ содержит чувствительные данные и предназначен только для HonestDesk.
 
+### GET `/api/admin/clients/{clientId}/license-policy`
+
+Возвращает отдельный client-level gate запуска HonestFlow:
+
+```json
+{
+  "clientId": "...",
+  "isEnabled": true
+}
+```
+
+Если строка `LicensePolicies` отсутствует, `isEnabled` равен `null` (legacy allow).
+Этот state не является статусом Client, Device или конкретной подписанной лицензии.
+
+### PUT `/api/admin/clients/{clientId}/license-policy`
+
+```json
+{
+  "isEnabled": false
+}
+```
+
+Идемпотентно создаёт или обновляет `LicensePolicies.IsEnabled` и пишет audit event.
+Не удаляет Client/Device/License history и не отзывает существующие refresh sessions:
+актуальное значение попадёт в следующий login/refresh response. Ответ `200` содержит
+сохранённые `clientId` и `isEnabled`.
+
 ### PUT `/api/admin/clients/{clientId}/integration-settings`
 
 ```json

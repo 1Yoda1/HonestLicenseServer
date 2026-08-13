@@ -30,6 +30,14 @@ public sealed record PutClientIntegrationSettingsRequest(
     bool RuDesktopEnabled,
     bool RuDesktopAutoOfferPasswordSetup);
 
+public sealed record ClientLicensePolicyResponse(
+    string ClientId, bool? IsEnabled);
+
+public sealed record PutClientLicensePolicyRequest
+{
+    public required bool IsEnabled { get; init; }
+}
+
 public sealed record DeviceConfiguration(
     string DeviceId, string Name, string? Address, string Status);
 

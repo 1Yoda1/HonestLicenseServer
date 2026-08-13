@@ -124,7 +124,17 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("AdminApi__Key", _originalAdminKey);
         Environment.SetEnvironmentVariable("LicenseSigningKeys__integration-key__PublicKeyBase64", _originalSigningKey);
         _signingKey.Dispose();
-        if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
+        for (var attempt = 0; Directory.Exists(_directory) && attempt < 3; attempt++)
+        {
+            try
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
+            }
+        }
     }
 
     public byte[] Sign(byte[] grantBytes) => _signingKey.SignData(grantBytes,

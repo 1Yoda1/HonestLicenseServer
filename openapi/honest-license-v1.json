@@ -775,6 +775,83 @@
         ]
       }
     },
+    "/api/admin/clients/{clientId}/license-policy": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "Admin_LicensePolicy",
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLicensePolicyResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminKey": [ ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "Admin_PutLicensePolicy",
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutClientLicensePolicyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLicensePolicyResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "AdminKey": [ ]
+          }
+        ]
+      }
+    },
     "/api/admin/clients/{clientId}/component-versions/{component}": {
       "put": {
         "tags": [
@@ -1957,6 +2034,20 @@
         },
         "additionalProperties": false
       },
+      "ClientLicensePolicyResponse": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "nullable": true
+          },
+          "isEnabled": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "ComponentConfiguration": {
         "type": "object",
         "properties": {
@@ -2382,6 +2473,18 @@
         },
         "additionalProperties": false
       },
+      "PutClientLicensePolicyRequest": {
+        "type": "object",
+        "required": [
+          "isEnabled"
+        ],
+        "properties": {
+          "isEnabled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "PutComponentAssetRequest": {
         "type": "object",
         "properties": {
@@ -2544,6 +2647,10 @@
           },
           "clientName": {
             "type": "string",
+            "nullable": true
+          },
+          "licensePolicyEnabled": {
+            "type": "boolean",
             "nullable": true
           }
         },

@@ -43,6 +43,11 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
             return ApiProblems.Create(HttpContext, StatusCodes.Status403Forbidden,
                 "client_disabled", "Client is disabled");
 
+        var licensePolicyEnabled = await db.LicensePolicies.AsNoTracking()
+            .Where(x => x.ClientId == credential.ClientId)
+            .Select(x => (bool?)x.IsEnabled)
+            .SingleOrDefaultAsync();
+
         loginLimiter.Reset(attemptKey);
 
         await using var transaction = await DeviceBindingGuard.BeginImmediateWriteAsync(db);
@@ -67,7 +72,7 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
         await transaction.CommitAsync();
         return Ok(new TokenResponse(
             pair.AccessToken, pair.RefreshToken, 900, registrationRequired,
-            credential.Client.ExternalClientId, credential.Client.Name));
+            credential.Client.ExternalClientId, credential.Client.Name, licensePolicyEnabled));
     }
 
     [HttpPost("refresh")]
@@ -87,6 +92,10 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
         if (client is null || !client.IsActive)
             return ApiProblems.Create(HttpContext, StatusCodes.Status403Forbidden,
                 "client_disabled", "Client is disabled");
+        var licensePolicyEnabled = await db.LicensePolicies.AsNoTracking()
+            .Where(x => x.ClientId == current.ClientId)
+            .Select(x => (bool?)x.IsEnabled)
+            .SingleOrDefaultAsync();
         if (current.DeviceId is not null)
         {
             var device = await db.Devices.AsNoTracking().SingleOrDefaultAsync(x => x.Id == current.DeviceId);
@@ -104,7 +113,7 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
         await db.SaveChangesAsync();
         return Ok(new TokenResponse(
             pair.AccessToken, pair.RefreshToken, 900, pair.Session.DeviceId is null,
-            client.ExternalClientId, client.Name));
+            client.ExternalClientId, client.Name, licensePolicyEnabled));
     }
 
     [HttpPost("logout")]
