@@ -1,3 +1,4 @@
+using HonestLicenseServer.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.OpenApi;
@@ -19,7 +20,16 @@ public sealed class OpenApiSecurityOperationFilter : IOperationFilter
 
         var metadata = descriptor.EndpointMetadata;
         if (metadata.OfType<IAllowAnonymous>().Any()) return;
-        if (metadata.OfType<IAuthorizeData>().Any()) operation.Security.Add(Requirement("Bearer"));
+        IAuthorizeData[] authorization = metadata.OfType<IAuthorizeData>().ToArray();
+        if (authorization.Any(item =>
+                (item.AuthenticationSchemes ?? string.Empty)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Contains(ServiceInstallOnlyDefaults.Scheme, StringComparer.Ordinal)))
+        {
+            operation.Security.Add(Requirement("InstallBearer"));
+            return;
+        }
+        if (authorization.Length > 0) operation.Security.Add(Requirement("Bearer"));
     }
 
     private static OpenApiSecurityRequirement Requirement(string scheme)

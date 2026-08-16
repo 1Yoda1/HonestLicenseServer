@@ -170,6 +170,14 @@ public class AuditEvent
     public required string CorrelationId { get; set; }
 }
 
+public class ServiceInstallationAccess
+{
+    public int Id { get; set; }
+    public required string PasswordHash { get; set; }
+    public bool IsEnabled { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+}
+
 public class SupportRequest
 {
     public int Id { get; set; }

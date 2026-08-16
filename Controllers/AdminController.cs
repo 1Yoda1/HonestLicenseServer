@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using HonestLicenseServer.Authentication;
 using HonestLicenseServer.Data;
 using HonestLicenseServer.Contracts;
 using HonestLicenseServer.Infrastructure;
@@ -13,7 +14,8 @@ namespace HonestLicenseServer.Controllers;
 [ApiController]
 [Route("api/admin")]
 public class AdminController(HonestDbContext db, IConfiguration configuration,
-    LicenseSignatureVerifier signatureVerifier) : ControllerBase
+    LicenseSignatureVerifier signatureVerifier,
+    ServiceInstallTokenStore serviceInstallTokens) : ControllerBase
 {
     [HttpGet("clients")]
     public async Task<IActionResult> Clients()
@@ -656,6 +658,64 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         AddAudit("SupportRequest.Resolved", "SupportRequest", id.ToString(), request.ClientId, new { });
         await db.SaveChangesAsync();
         return NoContent();
+    }
+
+    [HttpGet("service-install-access")]
+    [ProducesResponseType<ServiceInstallAccessSettingsResponse>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetServiceInstallAccess(CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        ServiceInstallationAccess? access = await db.ServiceInstallationAccess
+            .AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        return Ok(new ServiceInstallAccessSettingsResponse(
+            access?.IsEnabled ?? false,
+            !string.IsNullOrWhiteSpace(access?.PasswordHash),
+            access?.UpdatedAtUtc));
+    }
+
+    [HttpPut("service-install-access")]
+    [ProducesResponseType<ServiceInstallAccessSettingsResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> PutServiceInstallAccess(
+        PutServiceInstallAccessSettingsRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        ServiceInstallationAccess? access = await db.ServiceInstallationAccess
+            .SingleOrDefaultAsync(cancellationToken);
+        string? newPassword = string.IsNullOrWhiteSpace(request.NewPassword)
+            ? null
+            : request.NewPassword;
+        if (access is null && newPassword is null)
+            return ApiProblems.Create(HttpContext, StatusCodes.Status400BadRequest,
+                "service_install_password_required",
+                "A service installation password is required before the setting can be saved");
+        DateTime now = DateTime.UtcNow;
+        if (access is null)
+        {
+            access = new ServiceInstallationAccess
+            {
+                Id = 1,
+                PasswordHash = PasswordHasher.Hash(newPassword!),
+                IsEnabled = request.IsEnabled,
+                UpdatedAtUtc = now
+            };
+            db.ServiceInstallationAccess.Add(access);
+        }
+        else
+        {
+            if (newPassword is not null)
+                access.PasswordHash = PasswordHasher.Hash(newPassword);
+            access.IsEnabled = request.IsEnabled;
+            access.UpdatedAtUtc = now;
+        }
+
+        AddAudit("ServiceInstallAccess.Updated", "ServiceInstallationAccess", "global", null,
+            new { access.IsEnabled, passwordChanged = newPassword is not null });
+        await db.SaveChangesAsync(cancellationToken);
+        serviceInstallTokens.RevokeAll();
+        return Ok(new ServiceInstallAccessSettingsResponse(
+            access.IsEnabled, true, access.UpdatedAtUtc));
     }
 
     private bool IsAdmin()

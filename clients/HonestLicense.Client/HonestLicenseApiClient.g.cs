@@ -3571,6 +3571,9 @@ namespace HonestLicense.Client
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string? Name { get; set; }
 
+        [System.Text.Json.Serialization.JsonPropertyName("inn")]
+        public string? Inn { get; set; }
+
         [System.Text.Json.Serialization.JsonPropertyName("architecture")]
         public string? Architecture { get; set; }
 

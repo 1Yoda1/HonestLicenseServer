@@ -1,9 +1,12 @@
 using HonestLicenseServer.Data;
 using HonestLicenseServer.Models;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using System.Net;
 using System.Security.Cryptography;
 using Xunit;
 
@@ -115,6 +118,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
                 ["Smtp:Host"] = "",
                 ["Smtp:From"] = ""
             }));
+        builder.ConfigureServices(services =>
+            services.AddTransient<IStartupFilter, UniqueLoopbackAddressStartupFilter>());
     }
 
     public new async Task DisposeAsync()
@@ -156,4 +161,21 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         RequestedAddress = "Test physical address",
         Status = "Pending", RequestedAtUtc = now
     };
+
+    private sealed class UniqueLoopbackAddressStartupFilter : IStartupFilter
+    {
+        private static int _requestNumber;
+
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, continuation) =>
+            {
+                var requestNumber = Interlocked.Increment(ref _requestNumber);
+                context.Connection.RemoteIpAddress = IPAddress.Parse(
+                    $"127.{(requestNumber >> 16) & 0xff}.{(requestNumber >> 8) & 0xff}.{requestNumber & 0xff}");
+                await continuation();
+            });
+            next(app);
+        };
+    }
 }

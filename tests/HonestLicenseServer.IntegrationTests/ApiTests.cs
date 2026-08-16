@@ -13,6 +13,7 @@ using Xunit;
 
 namespace HonestLicenseServer.IntegrationTests;
 
+[Collection(IntegrationTestCollection.Name)]
 public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
@@ -129,6 +130,7 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
             await response.Content.ReadAsStringAsync());
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         var clientConfiguration = json.GetProperty("client");
+        Assert.Equal("7701234567", clientConfiguration.GetProperty("inn").GetString());
         Assert.Equal("integration-password",
             clientConfiguration.GetProperty("identificationCode").GetString());
         Assert.StartsWith("integration-chz-token",
@@ -141,6 +143,46 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.EndsWith("/api/assets/HonestFlow/2.5.0/download",
             component.GetProperty("downloadUrl").GetString());
         Assert.True(component.GetProperty("isOverride").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Configuration_returns_null_current_client_inn_without_leaking_another_client_inn()
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+        var current = await db.Clients.SingleAsync(x => x.ExternalClientId == "integration-client");
+        string? originalInn = current.Inn;
+        var foreign = new Client
+        {
+            ExternalClientId = "foreign-inn-" + Guid.NewGuid().ToString("N"),
+            Name = "Foreign INN client",
+            Inn = "9999999999",
+            Architecture = "x64",
+            IsActive = true,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        try
+        {
+            current.Inn = null;
+            db.Clients.Add(foreign);
+            await db.SaveChangesAsync();
+
+            using var client = AuthenticatedClient(ApiFactory.ActiveAccessToken);
+            var response = await client.GetAsync("/api/configuration/current");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(JsonValueKind.Null,
+                json.GetProperty("client").GetProperty("inn").ValueKind);
+        }
+        finally
+        {
+            current.Inn = originalInn;
+            db.Clients.Remove(foreign);
+            await db.SaveChangesAsync();
+        }
     }
 
     [Fact]

@@ -66,6 +66,14 @@ public static class DatabaseSchema
             CREATE INDEX IF NOT EXISTS IX_ConnectionRequests_Status_CreatedAtUtc
                 ON ConnectionRequests(Status, CreatedAtUtc);
             """, cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS ServiceInstallationAccess (
+                Id INTEGER PRIMARY KEY,
+                PasswordHash TEXT NOT NULL,
+                IsEnabled INTEGER NOT NULL,
+                UpdatedAtUtc TEXT NOT NULL
+            );
+            """, cancellationToken);
 
         var connection = db.Database.GetDbConnection();
         var closeWhenDone = connection.State != System.Data.ConnectionState.Open;

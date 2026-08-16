@@ -28,6 +28,29 @@ public sealed class AssetsController(
             .Select(x => x.Architecture)
             .SingleAsync(cancellationToken);
         var normalizedArchitecture = NormalizeArchitecture(architecture);
+        return await ResolveDownloadAsync(component, version, normalizedArchitecture, cancellationToken);
+    }
+
+    [HttpGet("install/{component}/{version}/download")]
+    [Authorize(
+        AuthenticationSchemes = ServiceInstallOnlyDefaults.Scheme,
+        Policy = ServiceInstallOnlyDefaults.Policy)]
+    [ProducesResponseType(StatusCodes.Status302Found)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]
+    public Task<IActionResult> InstallDownload(string component, string version,
+        CancellationToken cancellationToken)
+    {
+        string architecture = User.FindFirst(ServiceInstallOnlyDefaults.ArchitectureClaim)?.Value ?? "any";
+        return ResolveDownloadAsync(component, version, NormalizeArchitecture(architecture), cancellationToken);
+    }
+
+    private async Task<IActionResult> ResolveDownloadAsync(
+        string component,
+        string version,
+        string normalizedArchitecture,
+        CancellationToken cancellationToken)
+    {
         var candidates = await db.ComponentAssets.AsNoTracking()
             .Where(x => x.Component == component && x.Version == version &&
                 (x.Architecture == normalizedArchitecture || x.Architecture == "any"))

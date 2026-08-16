@@ -1068,6 +1068,83 @@
         ]
       }
     },
+    "/api/assets/install/{component}/{version}/download": {
+      "get": {
+        "tags": [ "Assets" ],
+        "operationId": "Assets_InstallDownload",
+        "parameters": [
+          { "name": "component", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "version", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "302": { "description": "Found" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not Found" },
+          "502": { "description": "Bad Gateway" }
+        },
+        "security": [ { "InstallBearer": [ ] } ]
+      }
+    },
+    "/api/service/install-access": {
+      "post": {
+        "tags": [ "ServiceInstallation" ],
+        "operationId": "ServiceInstallation_Authorize",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ServiceInstallAccessRequest" } },
+            "text/json": { "schema": { "$ref": "#/components/schemas/ServiceInstallAccessRequest" } },
+            "application/*+json": { "schema": { "$ref": "#/components/schemas/ServiceInstallAccessRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ServiceInstallAccessResponse" } }
+            }
+          },
+          "401": { "description": "Invalid service installation password" },
+          "403": { "description": "Service installation access is disabled" },
+          "429": { "description": "Too Many Requests" }
+        }
+      }
+    },
+    "/api/admin/service-install-access": {
+      "get": {
+        "tags": [ "Admin" ],
+        "operationId": "Admin_GetServiceInstallAccess",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ServiceInstallAccessSettingsResponse" } }
+            }
+          }
+        },
+        "security": [ { "AdminKey": [ ] } ]
+      },
+      "put": {
+        "tags": [ "Admin" ],
+        "operationId": "Admin_PutServiceInstallAccess",
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/PutServiceInstallAccessSettingsRequest" } },
+            "text/json": { "schema": { "$ref": "#/components/schemas/PutServiceInstallAccessSettingsRequest" } },
+            "application/*+json": { "schema": { "$ref": "#/components/schemas/PutServiceInstallAccessSettingsRequest" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ServiceInstallAccessSettingsResponse" } }
+            }
+          },
+          "400": { "description": "Password is required before access can be enabled" }
+        },
+        "security": [ { "AdminKey": [ ] } ]
+      }
+    },
     "/api/auth/login": {
       "post": {
         "tags": [
@@ -2010,6 +2087,10 @@
             "type": "string",
             "nullable": true
           },
+          "inn": {
+            "type": "string",
+            "nullable": true
+          },
           "architecture": {
             "type": "string",
             "nullable": true
@@ -2623,6 +2704,59 @@
         },
         "additionalProperties": false
       },
+      "PutServiceInstallAccessSettingsRequest": {
+        "type": "object",
+        "properties": {
+          "isEnabled": { "type": "boolean" },
+          "newPassword": { "type": "string", "minLength": 10, "maxLength": 512, "nullable": true }
+        },
+        "additionalProperties": false
+      },
+      "ServiceInstallAccessRequest": {
+        "required": [ "password" ],
+        "type": "object",
+        "properties": {
+          "password": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "appVersion": { "type": "string", "maxLength": 64, "nullable": true },
+          "architecture": { "type": "string", "maxLength": 20, "nullable": true }
+        },
+        "additionalProperties": false
+      },
+      "ServiceInstallAccessResponse": {
+        "type": "object",
+        "properties": {
+          "accessToken": { "type": "string" },
+          "expiresInSeconds": { "type": "integer", "format": "int32" },
+          "scope": { "type": "string" },
+          "components": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ServiceInstallComponentResponse" }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ServiceInstallAccessSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "isEnabled": { "type": "boolean" },
+          "hasPassword": { "type": "boolean" },
+          "updatedAtUtc": { "type": "string", "format": "date-time", "nullable": true }
+        },
+        "additionalProperties": false
+      },
+      "ServiceInstallComponentResponse": {
+        "type": "object",
+        "properties": {
+          "component": { "type": "string" },
+          "version": { "type": "string" },
+          "fileName": { "type": "string", "nullable": true },
+          "downloadUrl": { "type": "string", "nullable": true },
+          "sha256": { "type": "string", "nullable": true },
+          "sizeBytes": { "type": "integer", "format": "int64", "nullable": true },
+          "architecture": { "type": "string", "nullable": true }
+        },
+        "additionalProperties": false
+      },
       "TokenResponse": {
         "type": "object",
         "properties": {
@@ -2733,6 +2867,12 @@
         "description": "Administrative API key used by HonestDesk.",
         "name": "X-Admin-Key",
         "in": "header"
+      },
+      "InstallBearer": {
+        "type": "http",
+        "description": "Short-lived installation_only token returned by POST /api/service/install-access.",
+        "scheme": "bearer",
+        "bearerFormat": "opaque-install-only"
       }
     }
   },
@@ -2757,6 +2897,9 @@
     },
     {
       "name": "License"
+    },
+    {
+      "name": "ServiceInstallation"
     },
     {
       "name": "Support"

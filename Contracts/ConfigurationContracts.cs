@@ -14,7 +14,7 @@ public sealed record ConfigurationResponse(
     IReadOnlyList<ComponentConfiguration> Components);
 
 public sealed record ClientConfiguration(
-    string ClientId, string Name, string? Architecture,
+    string ClientId, string Name, string? Inn, string? Architecture,
     bool HasLmDatabaseBackup, bool RuDesktopEnabled,
     bool RuDesktopAutoOfferPasswordSetup,
     string? IdentificationCode, string? ChzToken);

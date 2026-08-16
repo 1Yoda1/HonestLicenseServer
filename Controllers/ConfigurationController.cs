@@ -66,7 +66,7 @@ public sealed class ConfigurationController(HonestDbContext db) : ControllerBase
 
         return Ok(new ConfigurationResponse(
             revision,
-            new ClientConfiguration(client.ExternalClientId, client.Name, client.Architecture,
+            new ClientConfiguration(client.ExternalClientId, client.Name, client.Inn, client.Architecture,
                 client.HasLmDatabaseBackup, settings?.RuDesktopEnabled ?? false,
                 settings?.RuDesktopAutoOfferPasswordSetup ?? false,
                 settings?.IdentificationCode, settings?.ChzToken),

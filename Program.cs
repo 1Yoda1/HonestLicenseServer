@@ -94,6 +94,13 @@ builder.Services.AddSwaggerGen(options =>
         In = ParameterLocation.Header,
         Description = "Administrative API key used by HonestDesk."
     });
+    options.AddSecurityDefinition("InstallBearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "opaque-install-only",
+        Description = "Short-lived installation_only token returned by POST /api/service/install-access."
+    });
     options.OperationFilter<OpenApiSecurityOperationFilter>();
 });
 builder.Services.AddDbContext<HonestDbContext>(options =>
@@ -112,7 +119,10 @@ builder.Services.AddHttpClient<IYandexPublicDownloadResolver, YandexPublicDownlo
     client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddAuthentication(OpaqueBearerDefaults.Scheme)
     .AddScheme<AuthenticationSchemeOptions, OpaqueBearerHandler>(
-        OpaqueBearerDefaults.Scheme, _ => { });
+        OpaqueBearerDefaults.Scheme, _ => { })
+    .AddScheme<AuthenticationSchemeOptions, ServiceInstallOnlyHandler>(
+        ServiceInstallOnlyDefaults.Scheme, _ => { });
+builder.Services.AddSingleton<ServiceInstallTokenStore>();
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy(OpaqueBearerDefaults.ActiveClientPolicy, policy =>
@@ -122,6 +132,12 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser()
             .RequireClaim(HonestClaimTypes.ClientActive, bool.TrueString)
             .RequireClaim(HonestClaimTypes.DeviceStatus, "Active"));
+    options.AddPolicy(ServiceInstallOnlyDefaults.Policy, policy =>
+    {
+        policy.AuthenticationSchemes.Add(ServiceInstallOnlyDefaults.Scheme);
+        policy.RequireAuthenticatedUser()
+            .RequireClaim(ServiceInstallOnlyDefaults.ScopeClaim, ServiceInstallOnlyDefaults.Scope);
+    });
 });
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, HonestAuthorizationResultHandler>();
 builder.Services.AddRateLimiter(options =>
@@ -164,6 +180,15 @@ builder.Services.AddRateLimiter(options =>
         {
             PermitLimit = 5,
             Window = TimeSpan.FromMinutes(10),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+    options.AddPolicy("service-install", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0,
             AutoReplenishment = true
         }));

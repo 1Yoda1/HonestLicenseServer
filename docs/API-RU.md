@@ -1,6 +1,6 @@
 # HonestLicenseServer API — полная документация
 
-Актуально для production API на 10 августа 2026 года.
+Актуально для production API на 15 августа 2026 года.
 
 - Base URL: `https://api.honestflow.ru`
 - Swagger UI: `https://api.honestflow.ru/swagger`
@@ -13,6 +13,7 @@
 
 ```text
 HonestFlow ── Bearer token ──> публичное клиентское API
+Installation Mode ── installation_only token ──> только установочные assets
 HonestDesk ── X-Admin-Key ──> административное API
 Сайт ─────── без авторизации ─> заявка на подключение
                                   │
@@ -51,7 +52,20 @@ Authorization: Bearer ACCESS_TOKEN
 - конфигурация и лицензия доступны только активному зарегистрированному
   устройству.
 
-### 2.2 Административный ключ HonestDesk
+### 2.2 Сервисный доступ только к установке
+
+`POST /api/service/install-access` проверяет отдельный сервисный пароль и
+выдаёт opaque-токен со scope `installation_only` на 30 минут. Refresh token не
+выдаётся. Токен хранится HonestFlow только в памяти и принимается только
+маршрутом скачивания установочных assets
+`GET /api/assets/install/{component}/{version}/download`.
+
+Этот токен не принимается auth, configuration, license, device registration и
+admin API. Настройка содержит только PBKDF2-SHA256 hash пароля, флаг включения и
+время изменения; plaintext не сохраняется. Управление выполняется HonestDesk
+через `GET/PUT /api/admin/service-install-access`.
+
+### 2.3 Административный ключ HonestDesk
 
 Все маршруты `/api/admin/*` требуют заголовок:
 
@@ -62,7 +76,7 @@ X-Admin-Key: ADMIN_KEY
 Ключ хранится только в локальном production-конфиге сервера и не должен
 попадать в Git.
 
-### 2.3 Ошибки
+### 2.4 Ошибки
 
 Большинство клиентских ошибок возвращается в формате Problem Details:
 
@@ -339,6 +353,7 @@ effectiveVersion = overrideVersion ?? globalVersion
   "client": {
     "clientId": "...",
     "name": "ООО Ромашка",
+    "inn": "7701234567",
     "architecture": "x64",
     "hasLmDatabaseBackup": true,
     "ruDesktopEnabled": false,

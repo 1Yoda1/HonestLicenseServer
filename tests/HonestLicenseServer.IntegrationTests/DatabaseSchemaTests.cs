@@ -9,6 +9,19 @@ namespace HonestLicenseServer.IntegrationTests;
 public sealed class DatabaseSchemaTests
 {
     [Fact]
+    public async Task Migration_adds_service_installation_access_table_to_existing_database()
+    {
+        await using var database = await TestDatabase.CreateAsync(legacyUniqueConstraint: false);
+        var db = database.Context;
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE ServiceInstallationAccess;");
+
+        await DatabaseSchema.EnsureCurrentAsync(db);
+
+        Assert.Equal(1L, await CountRowsAsync(db,
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ServiceInstallationAccess';"));
+    }
+
+    [Fact]
     public async Task Legacy_registration_constraint_is_replaced_by_pending_only_unique_index()
     {
         await using var database = await TestDatabase.CreateAsync(legacyUniqueConstraint: true);
