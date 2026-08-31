@@ -955,6 +955,23 @@ Controller, ESM и LmModule; JSON, licenses, backup-архивы и постор
 Ошибки: `404 component_asset_not_found`,
 `404 component_asset_download_not_configured`, `502`, `401`, `403`.
 
+### GET `/api/updates/honestflow/current`
+
+Публичный узкий endpoint самообновления HonestFlow. Не требует login, DeviceId,
+лицензии или service-install session. Возвращает только текущую запись
+`AppVersions.Application = HonestFlow` и соответствующий `ComponentAssets`:
+версию, файл, архитектуру, обязательные `sizeBytes` и `sha256`, а также ссылку
+на публичный HonestFlow-only download route. При отсутствии SHA-256, размера,
+asset или download source отвечает `404`; другие компоненты через этот маршрут
+недоступны.
+
+### GET `/api/updates/honestflow/{version}/download`
+
+Публичный redirect только для текущей опубликованной версии HonestFlow. Он
+проверяет наличие SHA-256 и размера до redirect, затем использует сохранённый
+direct URL либо существующий resolver Яндекс.Диска. Generic `/api/assets/*`
+остаётся защищённым Bearer/service-install authorization.
+
 ### GET `/api/admin/clients/{clientId}/component-versions`
 
 Возвращает все индивидуальные overrides клиента из

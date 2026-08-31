@@ -2012,6 +2012,30 @@
         ]
       }
     },
+    "/api/updates/honestflow/current": {
+      "get": {
+        "tags": [ "PublicHonestFlowUpdate" ],
+        "operationId": "PublicHonestFlowUpdate_Current",
+        "parameters": [ { "name": "architecture", "in": "query", "schema": { "type": "string" } } ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HonestFlowUpdateResponse" } } } },
+          "404": { "description": "Not Found" }
+        },
+        "security": [ ]
+      }
+    },
+    "/api/updates/honestflow/{version}/download": {
+      "get": {
+        "tags": [ "PublicHonestFlowUpdate" ],
+        "operationId": "PublicHonestFlowUpdate_Download",
+        "parameters": [
+          { "name": "version", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "architecture", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "302": { "description": "Found" }, "404": { "description": "Not Found" }, "502": { "description": "Bad Gateway" } },
+        "security": [ ]
+      }
+    },
     "/api/version/current/{application}": {
       "get": {
         "tags": [
@@ -2833,6 +2857,20 @@
             "type": "string",
             "nullable": true
           }
+        },
+        "additionalProperties": false
+      },
+      "HonestFlowUpdateResponse": {
+        "type": "object",
+        "required": [ "application", "version", "fileName", "architecture", "sizeBytes", "sha256", "downloadUrl" ],
+        "properties": {
+          "application": { "type": "string" },
+          "version": { "type": "string" },
+          "fileName": { "type": "string" },
+          "architecture": { "type": "string" },
+          "sizeBytes": { "type": "integer", "format": "int64" },
+          "sha256": { "type": "string" },
+          "downloadUrl": { "type": "string" }
         },
         "additionalProperties": false
       },
