@@ -123,6 +123,7 @@ builder.Services.AddAuthentication(OpaqueBearerDefaults.Scheme)
     .AddScheme<AuthenticationSchemeOptions, ServiceInstallOnlyHandler>(
         ServiceInstallOnlyDefaults.Scheme, _ => { });
 builder.Services.AddSingleton<ServiceInstallTokenStore>();
+builder.Services.AddScoped<IAuthorizationHandler, ServiceEntitlementHandler>();
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy(OpaqueBearerDefaults.ActiveClientPolicy, policy =>
@@ -132,6 +133,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser()
             .RequireClaim(HonestClaimTypes.ClientActive, bool.TrueString)
             .RequireClaim(HonestClaimTypes.DeviceStatus, "Active"));
+    options.AddPolicy(OpaqueBearerDefaults.ServicePolicy, policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireClaim(HonestClaimTypes.ClientActive, bool.TrueString)
+            .RequireClaim(HonestClaimTypes.DeviceStatus, "Active")
+            .AddRequirements(new ServiceEntitlementRequirement()));
     options.AddPolicy(ServiceInstallOnlyDefaults.Policy, policy =>
     {
         policy.AuthenticationSchemes.Add(ServiceInstallOnlyDefaults.Scheme);

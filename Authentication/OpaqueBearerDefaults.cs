@@ -5,6 +5,7 @@ public static class OpaqueBearerDefaults
     public const string Scheme = "OpaqueBearer";
     public const string ActiveClientPolicy = "ActiveClient";
     public const string ActiveDevicePolicy = "ActiveDevice";
+    public const string ServicePolicy = "Service";
 }
 
 public static class HonestClaimTypes

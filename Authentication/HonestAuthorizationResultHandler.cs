@@ -38,6 +38,23 @@ public sealed class HonestAuthorizationResultHandler : IAuthorizationMiddlewareR
                 return;
             }
 
+            if (!string.Equals(deviceStatus, "Active", StringComparison.Ordinal))
+            {
+                await ApiProblems.WriteAsync(context, StatusCodes.Status403Forbidden,
+                    "device_disabled", "Device is disabled");
+                return;
+            }
+
+            if (authorizeResult.AuthorizationFailure?.FailureReasons.Any(x =>
+                    string.Equals(x.Message, ServiceEntitlementRequirement.FailureReason,
+                        StringComparison.Ordinal)) == true)
+            {
+                await ApiProblems.WriteAsync(context, StatusCodes.Status403Forbidden,
+                    ServiceEntitlementRequirement.FailureReason, "Service license is required",
+                    "An active Service license is required for this operation.");
+                return;
+            }
+
             await ApiProblems.WriteAsync(context, StatusCodes.Status403Forbidden,
                 "device_disabled", "Device is disabled");
             return;

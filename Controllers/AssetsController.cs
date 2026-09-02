@@ -15,7 +15,7 @@ public sealed class AssetsController(
     ILogger<AssetsController> logger) : ControllerBase
 {
     [HttpGet("{component}/{version}/download")]
-    [Authorize(Policy = OpaqueBearerDefaults.ActiveDevicePolicy)]
+    [Authorize(Policy = OpaqueBearerDefaults.ServicePolicy)]
     [ProducesResponseType(StatusCodes.Status302Found)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status502BadGateway)]

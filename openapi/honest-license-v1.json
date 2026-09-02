@@ -998,6 +998,7 @@
           "Assets"
         ],
         "operationId": "Assets_Download",
+        "description": "Requires an active verified PersonalGrant for the authenticated client and device with the exact Service feature.",
         "parameters": [
           {
             "name": "component",
@@ -1884,6 +1885,7 @@
           "Support"
         ],
         "operationId": "Support_Create",
+        "description": "Requires an active verified PersonalGrant for the authenticated client and device with the exact Service feature.",
         "requestBody": {
           "content": {
             "application/json": {

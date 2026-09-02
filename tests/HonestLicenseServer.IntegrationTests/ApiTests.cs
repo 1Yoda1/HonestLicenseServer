@@ -186,7 +186,7 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    public async Task Asset_download_redirects_active_device_to_configured_source()
+    public async Task Asset_download_requires_service_entitlement()
     {
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -195,8 +195,9 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
             "Bearer", ApiFactory.ActiveAccessToken);
         var response = await client.GetAsync("/api/assets/HonestFlow/2.5.0/download");
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Equal("https://example.test/override", response.Headers.Location?.ToString());
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("service_required", problem.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -330,7 +331,7 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    public async Task Pending_device_can_create_support_request_and_admin_can_read_it()
+    public async Task Pending_device_cannot_create_support_request()
     {
         using var honestFlow = AuthenticatedClient(ApiFactory.PendingAccessToken);
         var create = await honestFlow.PostAsJsonAsync("/api/support/requests", new
@@ -340,15 +341,9 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
             contact = "integration@example.test",
             honestFlowVersion = "2.6.2.0"
         });
-        Assert.Equal(HttpStatusCode.Accepted, create.StatusCode);
-
-        using var admin = factory.CreateClient();
-        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
-        var list = await admin.GetAsync("/api/admin/support-requests");
-        Assert.Equal(HttpStatusCode.OK, list.StatusCode);
-        var items = await list.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Contains(items.EnumerateArray(), item =>
-            item.GetProperty("subject").GetString() == "Device approval");
+        Assert.Equal(HttpStatusCode.Forbidden, create.StatusCode);
+        var problem = await create.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("device_pending", problem.GetProperty("code").GetString());
     }
 
     [Fact]

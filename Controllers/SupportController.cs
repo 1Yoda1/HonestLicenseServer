@@ -13,7 +13,7 @@ namespace HonestLicenseServer.Controllers;
 public sealed class SupportController(HonestDbContext db) : ControllerBase
 {
     [HttpPost("requests")]
-    [Authorize(Policy = OpaqueBearerDefaults.ActiveClientPolicy)]
+    [Authorize(Policy = OpaqueBearerDefaults.ServicePolicy)]
     [EnableRateLimiting("support")]
     [ProducesResponseType<SupportRequestAcceptedResponse>(StatusCodes.Status202Accepted)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
