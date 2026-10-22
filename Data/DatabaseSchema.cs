@@ -45,6 +45,28 @@ public static class DatabaseSchema
                 ON SupportRequests(Status, CreatedAtUtc);
             """, cancellationToken);
         await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS RemoteAccessKeys (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                KeyId TEXT NOT NULL UNIQUE,
+                PublicKeyBase64 TEXT NOT NULL,
+                SignatureBase64 TEXT NOT NULL,
+                SigningKeyId TEXT NOT NULL,
+                CreatedAtUtc TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS RemoteAccessCredentials (
+                DeviceId INTEGER PRIMARY KEY,
+                ClientId INTEGER NOT NULL,
+                CredentialId TEXT NOT NULL,
+                KeyId TEXT NOT NULL,
+                RuDesktopId TEXT NOT NULL,
+                CiphertextBase64 TEXT NOT NULL,
+                IsActive INTEGER NOT NULL,
+                UpdatedAtUtc TEXT NOT NULL,
+                FOREIGN KEY (DeviceId) REFERENCES Devices(Id) ON DELETE CASCADE,
+                FOREIGN KEY (ClientId) REFERENCES Clients(Id) ON DELETE RESTRICT
+            );
+            """, cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS ConnectionRequests (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 CreatedAtUtc TEXT NOT NULL,
@@ -120,6 +142,10 @@ public static class DatabaseSchema
             await EnsureColumnAsync(connection, "DeviceRegistrationRequests", "RequestedAddress",
                 "TEXT NULL", cancellationToken);
             await EnsureColumnAsync(connection, "DeviceRegistrationRequests", "RequestedHonestFlowVersion",
+                "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "SupportRequests", "RemoteAccessCredentialId",
+                "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "SupportRequests", "RuDesktopId",
                 "TEXT NULL", cancellationToken);
             await EnsureDeviceRegistrationRequestPendingIndexAsync(connection, cancellationToken);
         }

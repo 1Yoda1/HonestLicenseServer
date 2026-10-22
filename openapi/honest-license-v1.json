@@ -5,6 +5,24 @@
     "version": "1.0"
   },
   "paths": {
+    "/api/admin/remote-access/key": {
+      "get": { "tags": [ "Admin" ], "operationId": "Admin_GetRemoteAccessKeyForAdmin", "responses": { "200": { "description": "Signed public key" }, "404": { "description": "Not configured" } }, "security": [ { "AdminKey": [ ] } ] },
+      "put": { "tags": [ "Admin" ], "operationId": "Admin_PublishRemoteAccessKey", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublishRemoteAccessKeyRequest" } } } }, "responses": { "204": { "description": "Published" }, "400": { "description": "Invalid key or signature" }, "409": { "description": "Key ID already exists" } }, "security": [ { "AdminKey": [ ] } ] }
+    },
+    "/api/admin/support-requests/{id}/remote-access": {
+      "get": { "tags": [ "Admin" ], "operationId": "Admin_GetSupportRequestRemoteAccess", "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int32" } } ], "responses": { "200": { "description": "Encrypted credential" }, "409": { "description": "Revoked or unavailable" } }, "security": [ { "AdminKey": [ ] } ] }
+    },
+    "/api/support/remote-access/key": {
+      "get": { "tags": [ "Support" ], "operationId": "Support_GetRemoteAccessKey", "responses": { "200": { "description": "Signed public key" }, "404": { "description": "Not configured" } }, "security": [ { "Bearer": [ ] } ] }
+    },
+    "/api/support/remote-access/current": {
+      "get": { "tags": [ "Support" ], "operationId": "Support_GetRemoteAccessStatus", "responses": { "200": { "description": "Credential synchronization state" } }, "security": [ { "Bearer": [ ] } ] },
+      "put": { "tags": [ "Support" ], "operationId": "Support_PutRemoteAccessCredential", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PutRemoteAccessCredentialRequest" } } } }, "responses": { "204": { "description": "Saved" }, "409": { "description": "Key changed" } }, "security": [ { "Bearer": [ ] } ] },
+      "delete": { "tags": [ "Support" ], "operationId": "Support_RevokeRemoteAccessCredential", "responses": { "204": { "description": "Revoked" } }, "security": [ { "Bearer": [ ] } ] }
+    },
+    "/api/support/remote-requests": {
+      "post": { "tags": [ "Support" ], "operationId": "Support_CreateRemoteRequest", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateRemoteSupportRequest" } } } }, "responses": { "202": { "description": "Accepted" }, "409": { "description": "Credential not ready" } }, "security": [ { "Bearer": [ ] } ] }
+    },
     "/api/admin/clients": {
       "get": {
         "tags": [
@@ -2102,6 +2120,24 @@
   },
   "components": {
     "schemas": {
+      "PublishRemoteAccessKeyRequest": {
+        "type": "object",
+        "required": [ "keyId", "publicKeyBase64", "signatureBase64", "signingKeyId" ],
+        "properties": { "keyId": { "type": "string" }, "publicKeyBase64": { "type": "string" }, "signatureBase64": { "type": "string" }, "signingKeyId": { "type": "string" } },
+        "additionalProperties": false
+      },
+      "PutRemoteAccessCredentialRequest": {
+        "type": "object",
+        "required": [ "credentialId", "keyId", "ruDesktopId", "ciphertextBase64" ],
+        "properties": { "credentialId": { "type": "string" }, "keyId": { "type": "string" }, "ruDesktopId": { "type": "string" }, "ciphertextBase64": { "type": "string" } },
+        "additionalProperties": false
+      },
+      "CreateRemoteSupportRequest": {
+        "type": "object",
+        "required": [ "subject", "message", "contact", "credentialId" ],
+        "properties": { "subject": { "type": "string" }, "message": { "type": "string" }, "contact": { "type": "string" }, "honestFlowVersion": { "type": "string", "nullable": true }, "credentialId": { "type": "string" } },
+        "additionalProperties": false
+      },
       "ClientConfiguration": {
         "type": "object",
         "properties": {

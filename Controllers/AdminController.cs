@@ -17,6 +17,78 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
     LicenseSignatureVerifier signatureVerifier,
     ServiceInstallTokenStore serviceInstallTokens) : ControllerBase
 {
+    [HttpGet("remote-access/key")]
+    public async Task<IActionResult> GetRemoteAccessKeyForAdmin()
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var key = await db.RemoteAccessKeys.AsNoTracking().OrderByDescending(x => x.Id).FirstOrDefaultAsync();
+        return key is null ? NotFound() : Ok(new RemoteAccessKeyResponse(
+            key.KeyId, key.PublicKeyBase64, key.SignatureBase64, key.SigningKeyId));
+    }
+
+    [HttpPut("remote-access/key")]
+    public async Task<IActionResult> PublishRemoteAccessKey(PublishRemoteAccessKeyRequest request)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        if (!Guid.TryParse(request.KeyId, out _))
+            return BadRequest(new { error = "invalid_key_id" });
+        try
+        {
+            byte[] publicKey = Convert.FromBase64String(request.PublicKeyBase64);
+            byte[] signature = Convert.FromBase64String(request.SignatureBase64);
+            using var rsa = RSA.Create();
+            rsa.ImportSubjectPublicKeyInfo(publicKey, out int read);
+            if (read != publicKey.Length || rsa.KeySize != 3072)
+                return BadRequest(new { error = "invalid_remote_access_key" });
+            byte[] signedBytes = Encoding.UTF8.GetBytes(
+                $"HonestFlow.RemoteAccessKey.v1\n{request.KeyId}\n{request.PublicKeyBase64}");
+            if (signatureVerifier.Verify(request.SigningKeyId, signedBytes, signature) != SignatureVerificationResult.Valid)
+                return BadRequest(new { error = "invalid_remote_access_key_signature" });
+        }
+        catch (Exception ex) when (ex is CryptographicException or FormatException)
+        {
+            return BadRequest(new { error = "invalid_remote_access_key" });
+        }
+        var existing = await db.RemoteAccessKeys.SingleOrDefaultAsync(x => x.KeyId == request.KeyId);
+        if (existing is not null)
+            return existing.PublicKeyBase64 == request.PublicKeyBase64 &&
+                   existing.SignatureBase64 == request.SignatureBase64 &&
+                   existing.SigningKeyId == request.SigningKeyId
+                ? NoContent() : Conflict(new { error = "remote_access_key_id_exists" });
+        if (await db.RemoteAccessCredentials.AnyAsync(x => x.IsActive) ||
+            await db.SupportRequests.AnyAsync(x => x.RemoteAccessCredentialId != null && x.Status == "Accepted"))
+            return Conflict(new { error = "remote_access_key_rotation_requires_idle_state" });
+        db.RemoteAccessKeys.Add(new RemoteAccessKey
+        {
+            KeyId = request.KeyId, PublicKeyBase64 = request.PublicKeyBase64,
+            SignatureBase64 = request.SignatureBase64, SigningKeyId = request.SigningKeyId,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        AddAudit("RemoteAccessKey.Published", "RemoteAccessKey", request.KeyId, null,
+            new { request.SigningKeyId });
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpGet("support-requests/{id:int}/remote-access")]
+    public async Task<IActionResult> GetSupportRequestRemoteAccess(int id)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        var request = await db.SupportRequests.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id);
+        if (request is null) return NotFound();
+        if (request.Status != "Accepted" || request.RemoteAccessCredentialId is null ||
+            request.DeviceId is not int deviceId)
+            return Conflict(new { error = "remote_access_not_available" });
+        if (!await db.Devices.AnyAsync(x => x.Id == deviceId && x.ClientId == request.ClientId && x.Status == "Active"))
+            return Conflict(new { error = "remote_access_device_not_active" });
+        var credential = await db.RemoteAccessCredentials.AsNoTracking().SingleOrDefaultAsync(x =>
+            x.DeviceId == deviceId && x.ClientId == request.ClientId && x.IsActive &&
+            x.CredentialId == request.RemoteAccessCredentialId);
+        if (credential is null) return Conflict(new { error = "remote_access_revoked" });
+        return Ok(new AdminRemoteAccessCredentialResponse(credential.CredentialId,
+            credential.KeyId, credential.RuDesktopId, credential.CiphertextBase64));
+    }
+
     [HttpGet("clients")]
     public async Task<IActionResult> Clients()
     {
@@ -643,7 +715,8 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         return Ok(await query.OrderByDescending(x => x.CreatedAtUtc).Select(x => new
         {
             x.Id, clientId = x.Client.ExternalClientId, x.ExternalDeviceId,
-            x.Subject, x.Message, x.Contact, x.HonestFlowVersion, x.Status, x.CreatedAtUtc
+            x.Subject, x.Message, x.Contact, x.HonestFlowVersion, x.Status, x.CreatedAtUtc,
+            x.RemoteAccessCredentialId, x.RuDesktopId
         }).ToListAsync());
     }
 
@@ -653,7 +726,7 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (!IsAdmin()) return AdminUnauthorized();
         var request = await db.SupportRequests.SingleOrDefaultAsync(x => x.Id == id);
         if (request is null) return NotFound(new { error = "support_request_not_found" });
-        if (request.Status is "Resolved" or "Closed") return NoContent();
+        if (request.Status is "Resolved" or "Closed" or "Cancelled") return NoContent();
         request.Status = "Resolved";
         AddAudit("SupportRequest.Resolved", "SupportRequest", id.ToString(), request.ClientId, new { });
         await db.SaveChangesAsync();

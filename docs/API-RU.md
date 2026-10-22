@@ -1001,13 +1001,49 @@ direct URL либо существующий resolver Яндекс.Диска. G
 Возвращает обращения из `SupportRequests`. Без `status` возвращает все.
 
 Поля: `id`, `clientId`, `externalDeviceId`, `subject`, `message`, `contact`,
-`honestFlowVersion`, `status`, `createdAtUtc`.
+`honestFlowVersion`, `status`, `createdAtUtc`, `remoteAccessCredentialId`,
+`ruDesktopId`. Для удалённой заявки `Cancelled` означает отзыв доступа.
 
 ### PUT `/api/admin/support-requests/{id}/resolve`
 
 Переводит выбранное обращение в `Status=Resolved`. Повторный вызов для
-`Resolved`/`Closed` идемпотентен. Ответ `204`; `404 support_request_not_found`,
+`Resolved`/`Closed`/`Cancelled` идемпотентен. Ответ `204`; `404 support_request_not_found`,
 если обращения нет.
+
+## Удалённая помощь RuDesktop
+
+Пароль создаётся отдельно на каждом ПК и передаётся в API только в виде
+RSA-OAEP-SHA256 шифротекста для ключа HonestDesk. Сервер не получает закрытый
+ключ. Публичный RSA-3072 ключ подписывается ключом выдачи лицензий по байтам
+UTF-8 `HonestFlow.RemoteAccessKey.v1\n{keyId}\n{publicKeyBase64}`; HonestFlow
+проверяет подпись встроенным доверенным ECDSA-ключом до установки пароля.
+
+- `PUT /api/admin/remote-access/key` (AdminKey) — публикует подписанный ключ:
+  `keyId`, `publicKeyBase64`, `signatureBase64`, `signingKeyId`. Повторная
+  публикация той же записи идемпотентна. `GET` того же пути возвращает текущий
+  ключ или `404`. Замена ключа блокируется (`409`), пока существуют активные
+  зашифрованные пароли или открытые удалённые заявки; массовый отзыв не
+  выполняется неявно.
+- `GET /api/support/remote-access/key` (Service bearer) — текущий подписанный
+  публичный ключ для HonestFlow.
+- `PUT /api/support/remote-access/current` (Service bearer) — зашифрованный
+  пароль текущего устройства: `credentialId` (GUID), `keyId`, `ruDesktopId`,
+  `ciphertextBase64`. Сервер определяет клиента и устройство из сессии, не из
+  JSON. Новая версия отменяет открытые удалённые заявки этого устройства.
+  `GET` возвращает `isActive`, `credentialId`, `ruDesktopId`, `keyId`.
+- `DELETE /api/support/remote-access/current` (Service bearer) — отзывает
+  зашифрованную запись и помечает открытые удалённые заявки `Cancelled`.
+  Это не меняет настройки RuDesktop на ПК: HonestFlow предварительно меняет
+  известный пароль и переключает RuDesktop на временный пароль.
+- `POST /api/support/remote-requests` (Service bearer) — удалённая заявка с
+  `subject`, `message`, `contact`, `honestFlowVersion`, `credentialId`.
+  Принимается только при действующей версии пароля данного устройства;
+  ответ `202`, при несовпадении — `409 remote_access_not_ready`.
+- `GET /api/admin/support-requests/{id}/remote-access` (AdminKey) — выдаёт
+  шифротекст лишь для открытой заявки с совпадающей действующей версией и
+  активным устройством. Отозванная/отменённая заявка даёт `409`.
+
+Обычный `POST /api/support/requests` остаётся доступен без RuDesktop.
 
 ## 16. Хранение данных
 
@@ -1025,6 +1061,8 @@ direct URL либо существующий resolver Яндекс.Диска. G
 | `ComponentAssets` | компонент, версия, архитектура, файл, public key/path Яндекса, SHA-256, размер | configuration, assets download, admin |
 | `ClientComponentVersions` | overrides версий клиента | configuration, admin |
 | `SupportRequests` | обращения из HonestFlow | HonestFlow, HonestDesk |
+| `RemoteAccessKeys` | подписанные публичные ключи HonestDesk | HonestDesk, HonestFlow |
+| `RemoteAccessCredentials` | шифротекст пароля и версия по устройству | HonestFlow, HonestDesk |
 | `ConnectionRequests` | заявки с сайта и SMTP-статус | сайт/API |
 | `AuditEvents` | административные изменения, IP, trace ID | сервер |
 

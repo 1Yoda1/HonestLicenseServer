@@ -9,6 +9,23 @@ namespace HonestLicenseServer.IntegrationTests;
 public sealed class DatabaseSchemaTests
 {
     [Fact]
+    public async Task Migration_adds_remote_access_tables_to_existing_database()
+    {
+        await using var database = await TestDatabase.CreateAsync(legacyUniqueConstraint: false);
+        var db = database.Context;
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE RemoteAccessCredentials;");
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE RemoteAccessKeys;");
+
+        await DatabaseSchema.EnsureCurrentAsync(db);
+
+        Assert.Equal(1L, await CountRowsAsync(db,
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='RemoteAccessKeys';"));
+        Assert.Equal(1L, await CountRowsAsync(db,
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='RemoteAccessCredentials';"));
+        Assert.Equal(0L, await CountRowsAsync(db, "PRAGMA foreign_key_check;"));
+    }
+
+    [Fact]
     public async Task Migration_adds_service_installation_access_table_to_existing_database()
     {
         await using var database = await TestDatabase.CreateAsync(legacyUniqueConstraint: false);

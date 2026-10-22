@@ -188,10 +188,34 @@ public class SupportRequest
     public required string Message { get; set; }
     public required string Contact { get; set; }
     public string? HonestFlowVersion { get; set; }
+    public string? RemoteAccessCredentialId { get; set; }
+    public string? RuDesktopId { get; set; }
     public required string Status { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public Client Client { get; set; } = null!;
     public Device? Device { get; set; }
+}
+
+public class RemoteAccessKey
+{
+    public int Id { get; set; }
+    public required string KeyId { get; set; }
+    public required string PublicKeyBase64 { get; set; }
+    public required string SignatureBase64 { get; set; }
+    public required string SigningKeyId { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+public class RemoteAccessCredential
+{
+    public int DeviceId { get; set; }
+    public int ClientId { get; set; }
+    public required string CredentialId { get; set; }
+    public required string KeyId { get; set; }
+    public required string RuDesktopId { get; set; }
+    public required string CiphertextBase64 { get; set; }
+    public bool IsActive { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 public class ConnectionRequest

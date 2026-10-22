@@ -18,6 +18,8 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
     public DbSet<DeviceRegistrationRequest> DeviceRegistrationRequests => Set<DeviceRegistrationRequest>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<SupportRequest> SupportRequests => Set<SupportRequest>();
+    public DbSet<RemoteAccessKey> RemoteAccessKeys => Set<RemoteAccessKey>();
+    public DbSet<RemoteAccessCredential> RemoteAccessCredentials => Set<RemoteAccessCredential>();
     public DbSet<ConnectionRequest> ConnectionRequests => Set<ConnectionRequest>();
     public DbSet<ServiceInstallationAccess> ServiceInstallationAccess => Set<ServiceInstallationAccess>();
 
@@ -41,6 +43,8 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
         b.Entity<RefreshToken>().HasIndex(x => x.AccessTokenHash).IsUnique();
         b.Entity<RefreshToken>().HasIndex(x => x.TokenHash).IsUnique();
         b.Entity<SupportRequest>().HasIndex(x => new { x.Status, x.CreatedAtUtc });
+        b.Entity<RemoteAccessKey>().HasIndex(x => x.KeyId).IsUnique();
+        b.Entity<RemoteAccessCredential>().HasKey(x => x.DeviceId);
         b.Entity<ConnectionRequest>().HasIndex(x => new { x.Status, x.CreatedAtUtc });
         b.Entity<ServiceInstallationAccess>().HasKey(x => x.Id);
 
