@@ -1,11 +1,13 @@
 using HonestLicenseServer.Data;
 using HonestLicenseServer.Models;
+using HonestLicenseServer.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Net;
 using System.Security.Cryptography;
 using Xunit;
@@ -25,6 +27,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     private string? _originalSigningKey;
     private readonly ECDsa _signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     private string DatabasePath => Path.Combine(_directory, "integration.db");
+    public FakeDiagnosticObjectStorage DiagnosticStorage { get; } = new();
 
     public async Task InitializeAsync()
     {
@@ -119,7 +122,11 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
                 ["Smtp:From"] = ""
             }));
         builder.ConfigureServices(services =>
-            services.AddTransient<IStartupFilter, UniqueLoopbackAddressStartupFilter>());
+        {
+            services.RemoveAll<IDiagnosticObjectStorage>();
+            services.AddSingleton<IDiagnosticObjectStorage>(DiagnosticStorage);
+            services.AddTransient<IStartupFilter, UniqueLoopbackAddressStartupFilter>();
+        });
     }
 
     public new async Task DisposeAsync()
@@ -177,5 +184,31 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             });
             next(app);
         };
+    }
+
+    public sealed class FakeDiagnosticObjectStorage : IDiagnosticObjectStorage
+    {
+        public bool IsConfigured => true;
+        public long UploadedSizeBytes { get; set; }
+        public string? LastObjectKey { get; private set; }
+        public HashSet<string> DeletedObjectKeys { get; } = [];
+
+        public string CreateUploadUrl(string objectKey, DateTime expiresAtUtc)
+        {
+            LastObjectKey = objectKey;
+            return $"https://storage.test/{objectKey}?upload=1";
+        }
+
+        public string CreateDownloadUrl(string objectKey, string fileName, DateTime expiresAtUtc) =>
+            $"https://storage.test/{objectKey}?download=1";
+
+        public Task<DiagnosticObjectInfo?> GetInfoAsync(string objectKey, CancellationToken cancellationToken) =>
+            Task.FromResult<DiagnosticObjectInfo?>(new DiagnosticObjectInfo(UploadedSizeBytes));
+
+        public Task DeleteAsync(string objectKey, CancellationToken cancellationToken)
+        {
+            DeletedObjectKeys.Add(objectKey);
+            return Task.CompletedTask;
+        }
     }
 }

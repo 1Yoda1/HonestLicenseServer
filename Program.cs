@@ -106,6 +106,7 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddDbContext<HonestDbContext>(options =>
     options.UseSqlite(connectionStringBuilder.ConnectionString));
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+builder.Services.Configure<DiagnosticStorageOptions>(builder.Configuration.GetSection("DiagnosticStorage"));
 builder.Services.AddTransient<IConnectionRequestNotifier, EmailConnectionRequestNotifier>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -115,6 +116,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 });
 builder.Services.AddSingleton<LoginAttemptLimiter>();
 builder.Services.AddSingleton<LicenseSignatureVerifier>();
+builder.Services.AddSingleton<IDiagnosticObjectStorage, S3DiagnosticObjectStorage>();
+builder.Services.AddHostedService<DiagnosticArchiveCleanupService>();
 builder.Services.AddHttpClient<IYandexPublicDownloadResolver, YandexPublicDownloadResolver>(client =>
     client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddAuthentication(OpaqueBearerDefaults.Scheme)

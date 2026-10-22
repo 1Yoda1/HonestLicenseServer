@@ -8,6 +8,7 @@ using HonestLicenseServer.Infrastructure;
 using HonestLicenseServer.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace HonestLicenseServer.Controllers;
 
@@ -15,7 +16,9 @@ namespace HonestLicenseServer.Controllers;
 [Route("api/admin")]
 public class AdminController(HonestDbContext db, IConfiguration configuration,
     LicenseSignatureVerifier signatureVerifier,
-    ServiceInstallTokenStore serviceInstallTokens) : ControllerBase
+    ServiceInstallTokenStore serviceInstallTokens,
+    IDiagnosticObjectStorage diagnosticStorage,
+    IOptions<DiagnosticStorageOptions> diagnosticOptions) : ControllerBase
 {
     [HttpGet("remote-access/key")]
     public async Task<IActionResult> GetRemoteAccessKeyForAdmin()
@@ -730,6 +733,66 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         request.Status = "Resolved";
         AddAudit("SupportRequest.Resolved", "SupportRequest", id.ToString(), request.ClientId, new { });
         await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpGet("diagnostics")]
+    public async Task<IActionResult> Diagnostics(CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        return Ok(await db.DiagnosticArchives.AsNoTracking()
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Select(x => new AdminDiagnosticArchiveResponse(
+                x.Id, x.Client.ExternalClientId, x.ClientName, x.ExternalDeviceId,
+                x.DeviceName, x.Address, x.FileName, x.SizeBytes, x.Sha256,
+                x.HonestFlowVersion, x.Status, x.CreatedAtUtc, x.UploadedAtUtc,
+                x.ExpiresAtUtc, x.LastDownloadedAtUtc, x.DeletedAtUtc))
+            .ToListAsync(cancellationToken));
+    }
+
+    [HttpPost("diagnostics/{id:int}/download")]
+    public async Task<IActionResult> CreateDiagnosticDownload(int id, CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        if (!diagnosticStorage.IsConfigured)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "diagnostic_storage_unavailable" });
+        var archive = await db.DiagnosticArchives.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (archive is null) return NotFound(new { error = "diagnostic_archive_not_found" });
+        if (archive.Status is not ("Available" or "Downloaded"))
+            return Conflict(new { error = "diagnostic_archive_not_available" });
+        if (archive.ExpiresAtUtc <= DateTime.UtcNow)
+            return Conflict(new { error = "diagnostic_archive_expired" });
+
+        DateTime linkExpiresAtUtc = DateTime.UtcNow.AddMinutes(
+            Math.Clamp(diagnosticOptions.Value.DownloadUrlMinutes, 2, 60));
+        archive.Status = "Downloaded";
+        archive.LastDownloadedAtUtc = DateTime.UtcNow;
+        AddAudit("DiagnosticArchive.Downloaded", "DiagnosticArchive", id.ToString(), archive.ClientId,
+            new { archive.ExternalDeviceId, archive.FileName });
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new DiagnosticDownloadResponse(
+            diagnosticStorage.CreateDownloadUrl(archive.ObjectKey, archive.FileName, linkExpiresAtUtc),
+            linkExpiresAtUtc));
+    }
+
+    [HttpDelete("diagnostics/{id:int}")]
+    public async Task<IActionResult> DeleteDiagnostic(int id, CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        if (!diagnosticStorage.IsConfigured)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "diagnostic_storage_unavailable" });
+        var archive = await db.DiagnosticArchives.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (archive is null) return NotFound(new { error = "diagnostic_archive_not_found" });
+        if (archive.Status is "Deleted" or "Expired") return NoContent();
+
+        await diagnosticStorage.DeleteAsync(archive.ObjectKey, cancellationToken);
+        archive.Status = "Deleted";
+        archive.DeletedAtUtc = DateTime.UtcNow;
+        AddAudit("DiagnosticArchive.Deleted", "DiagnosticArchive", id.ToString(), archive.ClientId,
+            new { archive.ExternalDeviceId, archive.FileName });
+        await db.SaveChangesAsync(cancellationToken);
         return NoContent();
     }
 

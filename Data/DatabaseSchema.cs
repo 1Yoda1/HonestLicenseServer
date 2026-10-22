@@ -45,6 +45,33 @@ public static class DatabaseSchema
                 ON SupportRequests(Status, CreatedAtUtc);
             """, cancellationToken);
         await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS DiagnosticArchives (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ClientId INTEGER NOT NULL,
+                DeviceId INTEGER NOT NULL,
+                ExternalDeviceId TEXT NOT NULL,
+                ClientName TEXT NOT NULL,
+                DeviceName TEXT NOT NULL,
+                Address TEXT NOT NULL,
+                FileName TEXT NOT NULL,
+                ObjectKey TEXT NOT NULL UNIQUE,
+                SizeBytes INTEGER NOT NULL,
+                Sha256 TEXT NOT NULL,
+                HonestFlowVersion TEXT NULL,
+                Status TEXT NOT NULL,
+                CreatedAtUtc TEXT NOT NULL,
+                UploadUrlExpiresAtUtc TEXT NOT NULL,
+                UploadedAtUtc TEXT NULL,
+                ExpiresAtUtc TEXT NOT NULL,
+                LastDownloadedAtUtc TEXT NULL,
+                DeletedAtUtc TEXT NULL,
+                FOREIGN KEY (ClientId) REFERENCES Clients(Id) ON DELETE RESTRICT,
+                FOREIGN KEY (DeviceId) REFERENCES Devices(Id) ON DELETE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS IX_DiagnosticArchives_Status_ExpiresAtUtc
+                ON DiagnosticArchives(Status, ExpiresAtUtc);
+            """, cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("""
             CREATE TABLE IF NOT EXISTS RemoteAccessKeys (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 KeyId TEXT NOT NULL UNIQUE,

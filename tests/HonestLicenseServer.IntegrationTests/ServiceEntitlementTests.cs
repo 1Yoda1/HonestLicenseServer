@@ -37,6 +37,50 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
     }
 
     [Fact]
+    public async Task Diagnostic_archive_keeps_history_after_download_and_delete()
+    {
+        var fixture = await CreateFixtureAsync();
+        await PublishGrantAsync(fixture, features: ["Service"]);
+        factory.DiagnosticStorage.UploadedSizeBytes = 4;
+
+        using var client = AuthenticatedClient(fixture.AccessToken);
+        HttpResponseMessage createResponse = await client.PostAsJsonAsync("/api/support/diagnostics/uploads", new
+        {
+            fileName = "diagnostics.zip",
+            sizeBytes = 4,
+            sha256 = new string('A', 64),
+            honestFlowVersion = "3.0.0"
+        });
+        Assert.Equal(HttpStatusCode.OK, createResponse.StatusCode);
+        JsonElement created = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
+        int id = created.GetProperty("id").GetInt32();
+
+        HttpResponseMessage completeResponse = await client.PostAsJsonAsync(
+            $"/api/support/diagnostics/{id}/complete",
+            new { sizeBytes = 4, sha256 = new string('A', 64) });
+        Assert.Equal(HttpStatusCode.NoContent, completeResponse.StatusCode);
+
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        JsonElement list = await admin.GetFromJsonAsync<JsonElement>("/api/admin/diagnostics");
+        JsonElement archive = list.EnumerateArray().Single(x => x.GetProperty("id").GetInt32() == id);
+        Assert.Equal("Service test address", archive.GetProperty("address").GetString());
+        Assert.Equal("Available", archive.GetProperty("status").GetString());
+
+        HttpResponseMessage download = await admin.PostAsync($"/api/admin/diagnostics/{id}/download", null);
+        Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+        Assert.Contains("download=1", await download.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await admin.DeleteAsync($"/api/admin/diagnostics/{id}")).StatusCode);
+        list = await admin.GetFromJsonAsync<JsonElement>("/api/admin/diagnostics");
+        archive = list.EnumerateArray().Single(x => x.GetProperty("id").GetInt32() == id);
+        Assert.Equal("Deleted", archive.GetProperty("status").GetString());
+        Assert.NotNull(archive.GetProperty("deletedAtUtc").GetString());
+        Assert.Contains(factory.DiagnosticStorage.LastObjectKey!, factory.DiagnosticStorage.DeletedObjectKeys);
+    }
+
+    [Fact]
     public async Task Active_device_without_license_is_denied_with_service_required()
     {
         var fixture = await CreateFixtureAsync();
@@ -174,6 +218,60 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/license/current")).StatusCode);
     }
 
+    [Fact]
+    public async Task Remote_support_request_stays_single_until_admin_marks_it_completed()
+    {
+        ServiceFixture fixture = await CreateFixtureAsync();
+        await PublishGrantAsync(fixture, features: ["Service"]);
+        string credentialId = Guid.NewGuid().ToString("D");
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            db.RemoteAccessCredentials.Add(new RemoteAccessCredential
+            {
+                DeviceId = fixture.DeviceId,
+                ClientId = fixture.ClientId,
+                CredentialId = credentialId,
+                KeyId = Guid.NewGuid().ToString("D"),
+                RuDesktopId = "123456789",
+                CiphertextBase64 = Convert.ToBase64String(new byte[384]),
+                IsActive = true,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var client = AuthenticatedClient(fixture.AccessToken);
+        object FirstBody() => new
+        {
+            credentialId,
+            subject = "Remote help",
+            message = "The operator described the problem in detail.",
+            contact = "Service client",
+            honestFlowVersion = "3.0.0"
+        };
+        JsonElement first = await (await client.PostAsJsonAsync(
+            "/api/support/remote-requests", FirstBody())).Content.ReadFromJsonAsync<JsonElement>();
+        JsonElement repeated = await (await client.PostAsJsonAsync(
+            "/api/support/remote-requests", FirstBody())).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(first.GetProperty("id").GetInt32(), repeated.GetProperty("id").GetInt32());
+
+        JsonElement active = await client.GetFromJsonAsync<JsonElement>("/api/support/remote-access/current");
+        Assert.Equal(first.GetProperty("id").GetInt32(), active.GetProperty("activeRequestId").GetInt32());
+        Assert.Equal(JsonValueKind.String, active.GetProperty("activeRequestCreatedAtUtc").ValueKind);
+
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync(
+            $"/api/admin/support-requests/{first.GetProperty("id").GetInt32()}/resolve", null)).StatusCode);
+
+        JsonElement completed = await client.GetFromJsonAsync<JsonElement>("/api/support/remote-access/current");
+        Assert.Equal(JsonValueKind.Null, completed.GetProperty("activeRequestId").ValueKind);
+        JsonElement next = await (await client.PostAsJsonAsync(
+            "/api/support/remote-requests", FirstBody())).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.NotEqual(first.GetProperty("id").GetInt32(), next.GetProperty("id").GetInt32());
+    }
+
     private async Task<ServiceFixture> CreateFixtureAsync(bool policyEnabled = true)
     {
         var suffix = Guid.NewGuid().ToString("N");
@@ -199,6 +297,7 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
             Client = client,
             ExternalDeviceId = fixture.ExternalDeviceId,
             Name = "Service entitlement test device",
+            Address = "Service test address",
             Status = "Active",
             RegisteredAtUtc = now
         };

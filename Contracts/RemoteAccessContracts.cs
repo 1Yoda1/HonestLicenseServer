@@ -18,7 +18,8 @@ public sealed record PutRemoteAccessCredentialRequest(
     [Required] string CiphertextBase64);
 
 public sealed record RemoteAccessCredentialStatusResponse(
-    bool IsActive, string? CredentialId, string? RuDesktopId, string? KeyId);
+    bool IsActive, string? CredentialId, string? RuDesktopId, string? KeyId,
+    int? ActiveRequestId, DateTime? ActiveRequestCreatedAtUtc);
 
 public sealed record CreateRemoteSupportRequest(
     [Required, StringLength(200, MinimumLength = 3)] string Subject,

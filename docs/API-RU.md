@@ -504,6 +504,31 @@ Rate limit: 5 обращений в час на клиента.
 }
 ```
 
+### Диагностические архивы
+
+Диагностика не является обращением поддержки и отображается в HonestDesk
+отдельно. Авторизация клиентских endpoint-ов: Bearer активного устройства с
+действующей лицензией `Service`.
+
+- `POST /api/support/diagnostics/uploads` принимает `fileName`, `sizeBytes`,
+  `sha256`, `honestFlowVersion`, создаёт запись `Pending` и возвращает
+  `id`, подписанный PUT URL Cloud.ru, срок URL и срок хранения архива.
+- HonestFlow загружает ZIP напрямую по PUT URL с `Content-Type: application/zip`.
+- `POST /api/support/diagnostics/{id}/complete` принимает `sizeBytes` и `sha256`,
+  проверяет принадлежность записи текущему устройству и размер объекта, затем
+  переводит запись в `Available`. С этого момента отсчитываются 48 часов.
+- `GET /api/admin/diagnostics` (AdminKey) возвращает историю с клиентом,
+  устройством, физическим адресом на момент отправки, временем, именем, размером,
+  SHA-256 и статусом.
+- `POST /api/admin/diagnostics/{id}/download` (AdminKey) возвращает короткий
+  подписанный GET URL и отмечает запись `Downloaded`; срок хранения не меняется.
+- `DELETE /api/admin/diagnostics/{id}` (AdminKey) удаляет объект и оставляет
+  запись со статусом `Deleted`.
+
+Фоновая очистка удаляет нетронутые и скачанные объекты после 48 часов и меняет
+статус записи на `Expired`. Архивы проходят напрямую между приложением и
+Cloud.ru; HonestLicenseServer не принимает и не отдаёт бинарное содержимое.
+
 ## 10. Публичная заявка с сайта
 
 ### POST `/api/connection-requests`
@@ -1030,7 +1055,9 @@ UTF-8 `HonestFlow.RemoteAccessKey.v1\n{keyId}\n{publicKeyBase64}`; HonestFlow
   пароль текущего устройства: `credentialId` (GUID), `keyId`, `ruDesktopId`,
   `ciphertextBase64`. Сервер определяет клиента и устройство из сессии, не из
   JSON. Новая версия отменяет открытые удалённые заявки этого устройства.
-  `GET` возвращает `isActive`, `credentialId`, `ruDesktopId`, `keyId`.
+  `GET` возвращает `isActive`, `credentialId`, `ruDesktopId`, `keyId`, а также
+  `activeRequestId` и `activeRequestCreatedAtUtc` для текущей незавершённой
+  заявки удалённой помощи.
 - `DELETE /api/support/remote-access/current` (Service bearer) — отзывает
   зашифрованную запись и помечает открытые удалённые заявки `Cancelled`.
   Это не меняет настройки RuDesktop на ПК: HonestFlow предварительно меняет
@@ -1038,7 +1065,10 @@ UTF-8 `HonestFlow.RemoteAccessKey.v1\n{keyId}\n{publicKeyBase64}`; HonestFlow
 - `POST /api/support/remote-requests` (Service bearer) — удалённая заявка с
   `subject`, `message`, `contact`, `honestFlowVersion`, `credentialId`.
   Принимается только при действующей версии пароля данного устройства;
-  ответ `202`, при несовпадении — `409 remote_access_not_ready`.
+  ответ `202`, при несовпадении — `409 remote_access_not_ready`. Пока у
+  устройства уже есть заявка со статусом `Accepted`, повторный вызов
+  идемпотентно возвращает её номер и время вместо создания дубля. После
+  перевода заявки в `Resolved` можно создать следующую.
 - `GET /api/admin/support-requests/{id}/remote-access` (AdminKey) — выдаёт
   шифротекст лишь для открытой заявки с совпадающей действующей версией и
   активным устройством. Отозванная/отменённая заявка даёт `409`.
@@ -1061,6 +1091,7 @@ UTF-8 `HonestFlow.RemoteAccessKey.v1\n{keyId}\n{publicKeyBase64}`; HonestFlow
 | `ComponentAssets` | компонент, версия, архитектура, файл, public key/path Яндекса, SHA-256, размер | configuration, assets download, admin |
 | `ClientComponentVersions` | overrides версий клиента | configuration, admin |
 | `SupportRequests` | обращения из HonestFlow | HonestFlow, HonestDesk |
+| `DiagnosticArchives` | метаданные, адрес, сроки и история диагностических ZIP | HonestFlow, HonestDesk |
 | `RemoteAccessKeys` | подписанные публичные ключи HonestDesk | HonestDesk, HonestFlow |
 | `RemoteAccessCredentials` | шифротекст пароля и версия по устройству | HonestFlow, HonestDesk |
 | `ConnectionRequests` | заявки с сайта и SMTP-статус | сайт/API |
@@ -1068,7 +1099,7 @@ UTF-8 `HonestFlow.RemoteAccessKey.v1\n{keyId}\n{publicKeyBase64}`; HonestFlow
 
 ## 17. Что хранится не в SQLite
 
-- исполняемые файлы `.exe`, `.msi`, `.zip` — на Яндекс.Диске;
+- исполняемые файлы `.exe`, `.msi`, `.zip` — во внешнем хранилище; диагностические ZIP — в приватном бакете Cloud.ru;
 - закрытый ECDSA-ключ — только локально у HonestDesk/оператора;
 - публичный ECDSA-ключ — в HonestFlow и production-конфигурации API;
 - Admin API key и SMTP password — в локальном production-конфиге;

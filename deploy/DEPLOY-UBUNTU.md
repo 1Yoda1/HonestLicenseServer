@@ -24,6 +24,32 @@ sudo chmod 600 /etc/honestserver/honestserver.env
 
 Do not put the production environment file in `/opt/honestserver` or Git.
 
+### Cloud.ru diagnostics credentials
+
+After the server code/schema deployment, configure the private diagnostic
+archive bucket from Windows. The script prompts for both values without echoing
+them, creates or updates the dedicated mode-600 file
+`/etc/honestserver/honestserver-diagnostics.env`, and adds a systemd drop-in at
+`/etc/systemd/system/honestserver.service.d/diagnostic-storage.conf`. It does
+not edit the service's existing environment file. The script also creates the
+otherwise-missing `/etc/honestserver` directory safely, then restarts
+`honestserver` and checks local Swagger:
+
+```powershell
+.\deploy\configure-diagnostic-storage.ps1
+```
+
+The script asks for the Cloud.ru tenant ID, then Key ID and Key Secret. Enter
+the tenant ID from **Object Storage → API settings**, not the Cloud.ru project
+name. Cloud.ru requires the S3 access identifier in the form
+`tenant_id:key_id`; the script combines those two values itself.
+
+Use `-SshTarget user@host` when the production SSH target differs from the
+default in `deploy-production.ps1`. Real credentials are never written to the
+repository; temporary local and remote files are removed in `finally`/`trap`.
+If restart or the health check fails, the previous dedicated diagnostic file
+and drop-in are restored automatically.
+
 ## Safe release sequence
 
 1. Verify the new binary locally and upload it under a temporary name.

@@ -196,6 +196,31 @@ public class SupportRequest
     public Device? Device { get; set; }
 }
 
+public class DiagnosticArchive
+{
+    public int Id { get; set; }
+    public int ClientId { get; set; }
+    public int DeviceId { get; set; }
+    public required string ExternalDeviceId { get; set; }
+    public required string ClientName { get; set; }
+    public required string DeviceName { get; set; }
+    public required string Address { get; set; }
+    public required string FileName { get; set; }
+    public required string ObjectKey { get; set; }
+    public long SizeBytes { get; set; }
+    public required string Sha256 { get; set; }
+    public string? HonestFlowVersion { get; set; }
+    public required string Status { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime UploadUrlExpiresAtUtc { get; set; }
+    public DateTime? UploadedAtUtc { get; set; }
+    public DateTime ExpiresAtUtc { get; set; }
+    public DateTime? LastDownloadedAtUtc { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
+    public Client Client { get; set; } = null!;
+    public Device Device { get; set; } = null!;
+}
+
 public class RemoteAccessKey
 {
     public int Id { get; set; }

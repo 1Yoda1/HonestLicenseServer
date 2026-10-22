@@ -16,12 +16,27 @@
       "get": { "tags": [ "Support" ], "operationId": "Support_GetRemoteAccessKey", "responses": { "200": { "description": "Signed public key" }, "404": { "description": "Not configured" } }, "security": [ { "Bearer": [ ] } ] }
     },
     "/api/support/remote-access/current": {
-      "get": { "tags": [ "Support" ], "operationId": "Support_GetRemoteAccessStatus", "responses": { "200": { "description": "Credential synchronization state" } }, "security": [ { "Bearer": [ ] } ] },
+      "get": { "tags": [ "Support" ], "operationId": "Support_GetRemoteAccessStatus", "responses": { "200": { "description": "Credential and active support request state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RemoteAccessCredentialStatusResponse" } } } } }, "security": [ { "Bearer": [ ] } ] },
       "put": { "tags": [ "Support" ], "operationId": "Support_PutRemoteAccessCredential", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PutRemoteAccessCredentialRequest" } } } }, "responses": { "204": { "description": "Saved" }, "409": { "description": "Key changed" } }, "security": [ { "Bearer": [ ] } ] },
       "delete": { "tags": [ "Support" ], "operationId": "Support_RevokeRemoteAccessCredential", "responses": { "204": { "description": "Revoked" } }, "security": [ { "Bearer": [ ] } ] }
     },
     "/api/support/remote-requests": {
-      "post": { "tags": [ "Support" ], "operationId": "Support_CreateRemoteRequest", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateRemoteSupportRequest" } } } }, "responses": { "202": { "description": "Accepted" }, "409": { "description": "Credential not ready" } }, "security": [ { "Bearer": [ ] } ] }
+      "post": { "tags": [ "Support" ], "operationId": "Support_CreateRemoteRequest", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateRemoteSupportRequest" } } } }, "responses": { "202": { "description": "Accepted or existing active request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SupportRequestAcceptedResponse" } } } }, "409": { "description": "Credential not ready" } }, "security": [ { "Bearer": [ ] } ] }
+    },
+    "/api/support/diagnostics/uploads": {
+      "post": { "tags": [ "Support" ], "operationId": "Support_CreateDiagnosticUpload", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateDiagnosticUploadRequest" } } } }, "responses": { "200": { "description": "Presigned Cloud.ru upload URL", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiagnosticUploadResponse" } } } }, "503": { "description": "Diagnostic storage is not configured" } }, "security": [ { "Bearer": [ ] } ] }
+    },
+    "/api/support/diagnostics/{id}/complete": {
+      "post": { "tags": [ "Support" ], "operationId": "Support_CompleteDiagnosticUpload", "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int32" } } ], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CompleteDiagnosticUploadRequest" } } } }, "responses": { "204": { "description": "Upload confirmed" }, "409": { "description": "Object or metadata mismatch" } }, "security": [ { "Bearer": [ ] } ] }
+    },
+    "/api/admin/diagnostics": {
+      "get": { "tags": [ "Admin" ], "operationId": "Admin_Diagnostics", "responses": { "200": { "description": "Diagnostic archive history", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/AdminDiagnosticArchiveResponse" } } } } } }, "security": [ { "AdminKey": [ ] } ] }
+    },
+    "/api/admin/diagnostics/{id}/download": {
+      "post": { "tags": [ "Admin" ], "operationId": "Admin_CreateDiagnosticDownload", "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int32" } } ], "responses": { "200": { "description": "Presigned Cloud.ru download URL", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DiagnosticDownloadResponse" } } } }, "409": { "description": "Archive is unavailable" } }, "security": [ { "AdminKey": [ ] } ] }
+    },
+    "/api/admin/diagnostics/{id}": {
+      "delete": { "tags": [ "Admin" ], "operationId": "Admin_DeleteDiagnostic", "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int32" } } ], "responses": { "204": { "description": "Object deleted, history retained" } }, "security": [ { "AdminKey": [ ] } ] }
     },
     "/api/admin/clients": {
       "get": {
@@ -2132,6 +2147,19 @@
         "properties": { "credentialId": { "type": "string" }, "keyId": { "type": "string" }, "ruDesktopId": { "type": "string" }, "ciphertextBase64": { "type": "string" } },
         "additionalProperties": false
       },
+      "RemoteAccessCredentialStatusResponse": {
+        "type": "object",
+        "required": [ "isActive" ],
+        "properties": {
+          "isActive": { "type": "boolean" },
+          "credentialId": { "type": "string", "nullable": true },
+          "ruDesktopId": { "type": "string", "nullable": true },
+          "keyId": { "type": "string", "nullable": true },
+          "activeRequestId": { "type": "integer", "format": "int32", "nullable": true },
+          "activeRequestCreatedAtUtc": { "type": "string", "format": "date-time", "nullable": true }
+        },
+        "additionalProperties": false
+      },
       "CreateRemoteSupportRequest": {
         "type": "object",
         "required": [ "subject", "message", "contact", "credentialId" ],
@@ -2417,6 +2445,66 @@
             "type": "string",
             "nullable": true
           }
+        },
+        "additionalProperties": false
+      },
+      "CreateDiagnosticUploadRequest": {
+        "required": [ "fileName", "sizeBytes", "sha256" ],
+        "type": "object",
+        "properties": {
+          "fileName": { "type": "string", "minLength": 5, "maxLength": 240 },
+          "sizeBytes": { "type": "integer", "format": "int64", "minimum": 1, "maximum": 524288000 },
+          "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "honestFlowVersion": { "type": "string", "maxLength": 100, "nullable": true }
+        },
+        "additionalProperties": false
+      },
+      "CompleteDiagnosticUploadRequest": {
+        "required": [ "sizeBytes", "sha256" ],
+        "type": "object",
+        "properties": {
+          "sizeBytes": { "type": "integer", "format": "int64", "minimum": 1, "maximum": 524288000 },
+          "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      },
+      "DiagnosticUploadResponse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "format": "int32" },
+          "uploadUrl": { "type": "string" },
+          "uploadUrlExpiresAtUtc": { "type": "string", "format": "date-time" },
+          "archiveExpiresAtUtc": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "DiagnosticDownloadResponse": {
+        "type": "object",
+        "properties": {
+          "downloadUrl": { "type": "string" },
+          "expiresAtUtc": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "AdminDiagnosticArchiveResponse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "format": "int32" },
+          "clientId": { "type": "string" },
+          "clientName": { "type": "string" },
+          "deviceId": { "type": "string" },
+          "deviceName": { "type": "string" },
+          "address": { "type": "string" },
+          "fileName": { "type": "string" },
+          "sizeBytes": { "type": "integer", "format": "int64" },
+          "sha256": { "type": "string" },
+          "honestFlowVersion": { "type": "string", "nullable": true },
+          "status": { "type": "string" },
+          "createdAtUtc": { "type": "string", "format": "date-time" },
+          "uploadedAtUtc": { "type": "string", "format": "date-time", "nullable": true },
+          "expiresAtUtc": { "type": "string", "format": "date-time" },
+          "lastDownloadedAtUtc": { "type": "string", "format": "date-time", "nullable": true },
+          "deletedAtUtc": { "type": "string", "format": "date-time", "nullable": true }
         },
         "additionalProperties": false
       },
