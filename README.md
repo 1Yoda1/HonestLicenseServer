@@ -1,113 +1,56 @@
 # HonestLicenseServer
 
-Полная русскоязычная документация API: [`docs/API-RU.md`](docs/API-RU.md).
+HonestLicenseServer — ASP.NET Core API экосистемы HonestFlow. Сервер является источником истины для клиентов, устройств, регистраций, конфигурации, версий компонентов, опубликованных лицензий, обращений поддержки и метаданных диагностических архивов.
 
-Согласованные границы системы и решения перед интеграцией клиентов описаны в
-[`docs/architecture-decisions.md`](docs/architecture-decisions.md).
+Полная русскоязычная спецификация API: [docs/API-RU.md](docs/API-RU.md). Согласованные архитектурные границы: [docs/architecture-decisions.md](docs/architecture-decisions.md). Канонический OpenAPI: [openapi/honest-license-v1.json](openapi/honest-license-v1.json).
 
-Интеграционные тесты используют отдельную временную SQLite-базу:
+## Основные сценарии
+
+- аутентификация HonestFlow: `login`, ротация `refresh`, `logout`; access token действует 15 минут, refresh token — 30 дней; в базе хранятся только хеши;
+- регистрация устройства: неизвестный или удалённый экземпляр получает ограниченную сессию и сам отправляет заявку с физическим адресом; администратор одобряет или отклоняет её;
+- Service-конфигурация и лицензирование: активное устройство получает конфигурацию и точные байты последнего действующего подписанного grant; сервер проверяет подпись до сохранения;
+- административный API HonestDesk: клиенты, устройства, регистрации, лицензии, версии, assets, политики, интеграционные настройки, обращения и доступ к диагностическим архивам;
+- поддержка и RuDesktop: запрос помощи, защищённый сервером зашифрованный credential и отзыв удалённого доступа;
+- диагностические архивы: выдача короткоживущих ссылок на прямую загрузку/скачивание из S3-совместимого объектного хранилища, фиксация SHA-256 и автоматическая очистка объектов через 48 часов;
+- публичная метаинформация о версии HonestFlow и сайтовые заявки на подключение.
+
+Сервер **не** хранит тело диагностического ZIP: в SQLite остаются только метаданные и история. Объектное хранилище настраивается внешними переменными окружения; секреты не входят в репозиторий.
+
+## Архитектура
+
+```mermaid
+flowchart LR
+    HF[HonestFlow] <-->|auth, configuration, license, support| S[HonestLicenseServer]
+    HD[HonestDesk] <-->|admin API| S
+    S <-->|presigned S3 links| O[Object storage]
+    S --> DB[(SQLite)]
+```
+
+| Путь | Ответственность |
+|---|---|
+| `Controllers/` | HTTP API |
+| `Contracts/` | Публичные запросы и ответы |
+| `Authentication/` | Авторизация и claims |
+| `Data/` | EF Core, схема SQLite, хеширование и сессии |
+| `Models/DatabaseModels.cs` | Persisted-сущности |
+| `Infrastructure/` | Ошибки API, проверка подписей, assets, уведомления и object storage |
+| `tests/HonestLicenseServer.IntegrationTests/` | Интеграционные тесты с временной SQLite-базой |
+| `deploy/`, `deploy-production.ps1` | Документированные сценарии Linux-развёртывания |
+
+## Локальная разработка
+
+Нужен .NET 10 SDK.
 
 ```powershell
+dotnet restore HonestLicenseServer.slnx
 dotnet test HonestLicenseServer.slnx -c Release
+dotnet run --project HonestLicenseServer.csproj --urls http://localhost:5074
 ```
 
-Текущая лицензия поддерживает `ETag`/`If-None-Match`. Текстовые обращения
-принимаются через `POST /api/support/requests`; SMTP и вложения на первом этапе
-не используются.
+Локальный admin key задаётся в `appsettings.Local.json`, который исключён из Git. В production используйте внешние переменные окружения; не добавляйте секреты, ключи облака, токены или production SQLite-файл в репозиторий.
 
-Локальный сервер лицензирования на .NET 10, ASP.NET Core, EF Core и SQLite.
+## Production
 
-## База
+Production SQLite-база — внешнее состояние и не является артефактом публикации. Схема обновляется только аддитивным контролируемым сценарием. Кодовое развёртывание выполняется через `deploy-production.ps1 -Mode Code`; режим `-Mode Database` применяется лишь для ожидаемого изменения схемы с явным `-ExpectedColumn` и резервной копией.
 
-API использует единую базу `../HonestLicenseFull.db`. Она содержит импортированные данные клиентов, настроек, устройств, лицензионных политик, версий и персональных signed grants, а также рабочие таблицы сессий, заявок и аудита.
-
-## Запуск
-
-```powershell
-dotnet restore
-dotnet run --urls http://localhost:5074
-```
-
-Локальный admin key задаётся в `appsettings.Local.json`. Этот файл исключён из Git. На Linux значение нужно передавать через переменную окружения `AdminApi__Key`.
-
-## HonestFlow API
-
-```text
-POST /api/auth/login
-POST /api/auth/refresh
-POST /api/auth/logout
-POST /api/device/request
-GET  /api/license/current
-GET  /api/version/current/{application}
-```
-
-Тело `POST /api/auth/login` не содержит отдельного логина:
-
-```json
-{
-  "password": "HF-...",
-  "deviceId": "installation-guid"
-}
-```
-
-Если устройство неизвестно, сервер возвращает ограниченную сессию с
-`deviceRegistrationRequired: true`, но не создаёт заявку автоматически.
-HonestFlow должен явно запросить физический адрес торговой точки и отправить:
-
-```json
-{
-  "deviceId": "installation-guid",
-  "name": "Касса 1",
-  "address": "Омск, ул. Примерная, 10"
-}
-```
-
-в `POST /api/device/request`. Поле `address` обязательное и означает физический
-адрес торговой точки, а не IP-адрес.
-
-Access token живёт 15 минут, refresh token — 30 дней. В базе хранятся только хеши токенов. Refresh token ротируется при каждом обновлении; logout отзывает текущую сессию.
-
-Неизвестное устройство автоматически создаёт заявку `Pending`. Оно не получает лицензию до подтверждения администратором.
-
-## HonestDesk Admin API
-
-Каждый запрос требует заголовок:
-
-```text
-X-Admin-Key: local-dev-admin-key-change-me
-```
-
-Чтение:
-
-```text
-GET /api/admin/clients
-GET /api/admin/clients/{clientId}
-GET /api/admin/devices?clientId={clientId}
-GET /api/admin/licenses?clientId={clientId}
-GET /api/admin/licenses/{id}
-GET /api/admin/versions
-GET /api/admin/device-requests?status=Pending
-```
-
-Изменение:
-
-```text
-POST /api/admin/clients
-PUT  /api/admin/clients/{clientId}
-POST /api/admin/devices
-PUT  /api/admin/devices/{id}
-POST /api/admin/licenses
-PUT  /api/admin/versions/{application}
-PUT  /api/admin/device-requests/{id}/approve
-PUT  /api/admin/device-requests/{id}/reject
-```
-
-Signed grant публикуется как `grantBase64` вместе с `signatureBase64`. Это сохраняет точные подписанные байты без изменения форматирования JSON.
-
-## Перед размещением на сервере
-
-- заменить локальный admin key и вынести его в переменную окружения;
-- добавить rate limiting входа;
-- настроить HTTPS, резервное копирование и журналирование;
-- добавить ротацию административных ключей;
-- оформить изменения схемы через миграции EF Core.
+Не выполняйте publish, SSH, systemd-операции, деплой или операции с production БД без отдельного разрешения.
