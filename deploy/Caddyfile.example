@@ -8,6 +8,11 @@ api.honestflow.ru {
 honestflow.ru {
     encode zstd gzip
 
+    @oldLegal path /legal /legal/ /legal/index.html
+    redir @oldLegal /#pricing 301
+    @oldTerms path /service-terms /service-terms/ /service-terms/index.html
+    redir @oldTerms /#sla 301
+
     handle /api/* {
         reverse_proxy 127.0.0.1:5498
     }

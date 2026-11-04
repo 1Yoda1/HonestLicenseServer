@@ -4,6 +4,7 @@ using HonestLicenseServer.Infrastructure;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace HonestLicenseServer.Controllers;
 
@@ -12,6 +13,8 @@ namespace HonestLicenseServer.Controllers;
 public sealed class PublicHonestFlowUpdateController(
     HonestDbContext db,
     IYandexPublicDownloadResolver yandex,
+    IReleaseObjectStorage releaseStorage,
+    IOptions<DiagnosticStorageOptions> storageOptions,
     ILogger<PublicHonestFlowUpdateController> logger) : ControllerBase
 {
     private const string Application = "HonestFlow";
@@ -39,7 +42,8 @@ public sealed class PublicHonestFlowUpdateController(
         return Ok(new HonestFlowUpdateResponse(
             Application, version.CurrentVersion, asset.FileName, asset.Architecture,
             asset.SizeBytes!.Value, asset.Sha256!,
-            $"{Request.Scheme}://{Request.Host}/api/updates/honestflow/{Uri.EscapeDataString(version.CurrentVersion)}/download?architecture={Uri.EscapeDataString(normalizedArchitecture)}"));
+            $"{Request.Scheme}://{Request.Host}/api/updates/honestflow/{Uri.EscapeDataString(version.CurrentVersion)}/download?architecture={Uri.EscapeDataString(normalizedArchitecture)}",
+            asset.ReleaseKeyId, asset.ManifestBase64, asset.ReleaseSignatureBase64));
     }
 
     [HttpGet("{version}/download")]
@@ -59,6 +63,15 @@ public sealed class PublicHonestFlowUpdateController(
         var asset = await FindPublishedAssetAsync(version, normalizedArchitecture, cancellationToken);
         if (asset is null || !HasTrustedMetadata(asset) || !HasDownloadSource(asset))
             return Missing("honestflow_update_asset_unavailable", "HonestFlow update asset is unavailable");
+        if (!string.IsNullOrWhiteSpace(asset.ObjectKey))
+        {
+            if (!releaseStorage.IsConfigured)
+                return ApiProblems.Create(HttpContext, StatusCodes.Status503ServiceUnavailable,
+                    "release_storage_unavailable", "Release storage is unavailable");
+            DateTime expires = DateTime.UtcNow.AddMinutes(
+                Math.Clamp(storageOptions.Value.DownloadUrlMinutes, 2, 60));
+            return Redirect(releaseStorage.CreateDownloadUrl(asset.ObjectKey, asset.FileName, expires));
+        }
         if (!string.IsNullOrWhiteSpace(asset.DownloadUrl)) return Redirect(asset.DownloadUrl);
 
         try
@@ -87,9 +100,13 @@ public sealed class PublicHonestFlowUpdateController(
         ApiProblems.Create(HttpContext, StatusCodes.Status404NotFound, code, detail);
 
     private static bool HasTrustedMetadata(Models.ComponentAsset asset) =>
-        asset.SizeBytes is > 0 && asset.Sha256?.Length == 64 && asset.Sha256.All(Uri.IsHexDigit);
+        asset.SizeBytes is > 0 && asset.Sha256?.Length == 64 && asset.Sha256.All(Uri.IsHexDigit) &&
+        (string.IsNullOrWhiteSpace(asset.ObjectKey) ||
+         (!string.IsNullOrWhiteSpace(asset.ReleaseKeyId) &&
+          !string.IsNullOrWhiteSpace(asset.ManifestBase64) &&
+          !string.IsNullOrWhiteSpace(asset.ReleaseSignatureBase64)));
 
     private static bool HasDownloadSource(Models.ComponentAsset asset) =>
-        !string.IsNullOrWhiteSpace(asset.DownloadUrl) ||
+        !string.IsNullOrWhiteSpace(asset.ObjectKey) || !string.IsNullOrWhiteSpace(asset.DownloadUrl) ||
         (!string.IsNullOrWhiteSpace(asset.YandexPublicKey) && !string.IsNullOrWhiteSpace(asset.YandexPath));
 }

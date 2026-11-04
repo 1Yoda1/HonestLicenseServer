@@ -17,13 +17,13 @@ namespace HonestLicenseServer.IntegrationTests;
 public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
-    public async Task Public_connection_request_is_saved_even_when_smtp_is_unavailable()
+    public async Task Public_connection_request_is_saved_without_external_notifications()
     {
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.UserAgent.ParseAdd("HonestFlow-Site-Test/1.0");
         var response = await client.PostAsJsonAsync("/api/connection-requests", new
         {
-            contactName = "Иван Иванов", company = "ООО Ромашка",
+            privacyPolicyVersion = "1.0", consent = true, consentVersion = "1.0", contactName = "Иван Иванов", company = "ООО Ромашка",
             phone = "+7 999 000-00-00", email = "ivan@example.ru", city = "Омск",
             workplaceCount = 12, inventorySystem = "1С",
             comment = "Хотим подключить сеть магазинов", website = "",
@@ -42,7 +42,7 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal("Иван Иванов", saved.ContactName);
         Assert.Equal(12, saved.WorkplaceCount);
         Assert.Null(saved.NotificationSentAtUtc);
-        Assert.Contains("SMTP", saved.NotificationError);
+        Assert.Null(saved.NotificationError);
     }
 
     [Fact]
@@ -56,7 +56,7 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         using var client = factory.CreateClient();
         var response = await client.PostAsJsonAsync("/api/connection-requests", new
         {
-            contactName = "Bot", phone = "123", workplaceCount = 1,
+            privacyPolicyVersion = "1.0", consent = true, consentVersion = "1.0", contactName = "Bot", phone = "+7 999 000-00-00", city = "Омск", workplaceCount = 1,
             website = "https://spam.example"
         });
 
@@ -73,13 +73,27 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         using var client = factory.CreateClient();
         var response = await client.PostAsJsonAsync("/api/connection-requests", new
         {
-            contactName = "", phone = "1", workplaceCount = 0, email = "not-an-email"
+            privacyPolicyVersion = "1.0", consent = true, consentVersion = "1.0", contactName = "", phone = "1", workplaceCount = 0, email = "not-an-email"
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var result = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.False(result.GetProperty("success").GetBoolean());
         Assert.Equal("Проверьте заполненные данные.", result.GetProperty("message").GetString());
+    }
+
+    [Theory]
+    [InlineData("+7 999 000-00-00", "", HttpStatusCode.BadRequest)]
+    [InlineData("1234567890", "Омск", HttpStatusCode.BadRequest)]
+    [InlineData("+1 (202) 555-0144", "Омск", HttpStatusCode.Created)]
+    public async Task Connection_request_validates_city_and_phone(string phone, string city, HttpStatusCode expected)
+    {
+        using var client = factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/connection-requests", new
+        {
+            privacyPolicyVersion = "1.0", consent = true, consentVersion = "1.0", contactName = "Тест", phone, city, workplaceCount = 1
+        });
+        Assert.Equal(expected, response.StatusCode);
     }
 
     [Fact]

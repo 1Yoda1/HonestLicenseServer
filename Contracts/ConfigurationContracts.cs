@@ -48,7 +48,8 @@ public sealed record LicensePolicyConfiguration(
 public sealed record ComponentConfiguration(
     string Component, string GlobalVersion, string? OverrideVersion,
     string EffectiveVersion, string? FileName, string? DownloadUrl,
-    string? Sha256, long? SizeBytes, string? Architecture, bool IsOverride);
+    string? Sha256, long? SizeBytes, string? Architecture, bool IsOverride,
+    string? ReleaseKeyId, string? ManifestBase64, string? ReleaseSignatureBase64);
 
 public sealed record PutComponentAssetRequest(
     [Required, StringLength(260, MinimumLength = 1)] string FileName,

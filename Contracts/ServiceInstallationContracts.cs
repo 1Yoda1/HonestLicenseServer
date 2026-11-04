@@ -20,7 +20,10 @@ public sealed record ServiceInstallComponentResponse(
     string? DownloadUrl,
     string? Sha256,
     long? SizeBytes,
-    string? Architecture);
+    string? Architecture,
+    string? ReleaseKeyId,
+    string? ManifestBase64,
+    string? ReleaseSignatureBase64);
 
 public sealed record ServiceInstallAccessSettingsResponse(
     bool IsEnabled,

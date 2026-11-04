@@ -105,9 +105,8 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddDbContext<HonestDbContext>(options =>
     options.UseSqlite(connectionStringBuilder.ConnectionString));
-builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
+builder.Services.Configure<ConnectionRequestPrivacyOptions>(builder.Configuration.GetSection("ConnectionRequestPrivacy"));
 builder.Services.Configure<DiagnosticStorageOptions>(builder.Configuration.GetSection("DiagnosticStorage"));
-builder.Services.AddTransient<IConnectionRequestNotifier, EmailConnectionRequestNotifier>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -116,8 +115,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 });
 builder.Services.AddSingleton<LoginAttemptLimiter>();
 builder.Services.AddSingleton<LicenseSignatureVerifier>();
+builder.Services.AddSingleton<ReleaseManifestSignatureVerifier>();
 builder.Services.AddSingleton<IDiagnosticObjectStorage, S3DiagnosticObjectStorage>();
+builder.Services.AddSingleton<IReleaseObjectStorage, S3ReleaseObjectStorage>();
 builder.Services.AddHostedService<DiagnosticArchiveCleanupService>();
+builder.Services.AddHostedService<ReleaseUploadCleanupService>();
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddScoped<ConnectionRequestDeletionService>();
+builder.Services.AddHostedService<ConnectionRequestCleanupService>();
 builder.Services.AddHttpClient<IYandexPublicDownloadResolver, YandexPublicDownloadResolver>(client =>
     client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddAuthentication(OpaqueBearerDefaults.Scheme)

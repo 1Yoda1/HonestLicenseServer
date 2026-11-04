@@ -55,7 +55,8 @@ public sealed class ConfigurationController(HonestDbContext db) : ControllerBase
                 $"{Uri.EscapeDataString(asset.Component)}/{Uri.EscapeDataString(asset.Version)}/download";
             return new ComponentConfiguration(global.Application, global.CurrentVersion,
                 overrideVersion, effectiveVersion, asset?.FileName, downloadUrl,
-                asset?.Sha256, asset?.SizeBytes, asset?.Architecture, overrideVersion is not null);
+                asset?.Sha256, asset?.SizeBytes, asset?.Architecture, overrideVersion is not null,
+                asset?.ReleaseKeyId, asset?.ManifestBase64, asset?.ReleaseSignatureBase64);
         }).ToList();
 
         var revisionCandidates = new List<DateTime> { client.UpdatedAtUtc, device.RegisteredAtUtc };

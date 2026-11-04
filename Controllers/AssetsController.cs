@@ -4,6 +4,7 @@ using HonestLicenseServer.Infrastructure;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace HonestLicenseServer.Controllers;
 
@@ -12,6 +13,8 @@ namespace HonestLicenseServer.Controllers;
 public sealed class AssetsController(
     HonestDbContext db,
     IYandexPublicDownloadResolver yandex,
+    IReleaseObjectStorage releaseStorage,
+    IOptions<DiagnosticStorageOptions> storageOptions,
     ILogger<AssetsController> logger) : ControllerBase
 {
     [HttpGet("{component}/{version}/download")]
@@ -62,6 +65,20 @@ public sealed class AssetsController(
             return ApiProblems.Create(HttpContext, StatusCodes.Status404NotFound,
                 "component_asset_not_found", "Component asset was not found");
 
+        if (!string.IsNullOrWhiteSpace(asset.ObjectKey))
+        {
+            if (string.IsNullOrWhiteSpace(asset.ReleaseKeyId) ||
+                string.IsNullOrWhiteSpace(asset.ManifestBase64) ||
+                string.IsNullOrWhiteSpace(asset.ReleaseSignatureBase64))
+                return ApiProblems.Create(HttpContext, StatusCodes.Status404NotFound,
+                    "component_asset_signature_missing", "Component asset signature is missing");
+            if (!releaseStorage.IsConfigured)
+                return ApiProblems.Create(HttpContext, StatusCodes.Status503ServiceUnavailable,
+                    "release_storage_unavailable", "Release storage is unavailable");
+            DateTime expires = DateTime.UtcNow.AddMinutes(
+                Math.Clamp(storageOptions.Value.DownloadUrlMinutes, 2, 60));
+            return Redirect(releaseStorage.CreateDownloadUrl(asset.ObjectKey, asset.FileName, expires));
+        }
         if (!string.IsNullOrWhiteSpace(asset.DownloadUrl))
             return Redirect(asset.DownloadUrl);
         if (string.IsNullOrWhiteSpace(asset.YandexPublicKey) ||

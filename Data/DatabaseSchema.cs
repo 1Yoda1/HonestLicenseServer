@@ -123,6 +123,28 @@ public static class DatabaseSchema
                 UpdatedAtUtc TEXT NOT NULL
             );
             """, cancellationToken);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS ReleaseUploads (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Component TEXT NOT NULL,
+                Version TEXT NOT NULL,
+                Architecture TEXT NOT NULL,
+                FileName TEXT NOT NULL,
+                ObjectKey TEXT NOT NULL UNIQUE,
+                MultipartUploadId TEXT NULL,
+                SizeBytes INTEGER NOT NULL,
+                Sha256 TEXT NOT NULL,
+                ReleaseKeyId TEXT NOT NULL,
+                ManifestBase64 TEXT NOT NULL,
+                ReleaseSignatureBase64 TEXT NOT NULL,
+                Status TEXT NOT NULL,
+                CreatedAtUtc TEXT NOT NULL,
+                UploadUrlExpiresAtUtc TEXT NOT NULL,
+                CompletedAtUtc TEXT NULL
+            );
+            CREATE INDEX IF NOT EXISTS IX_ReleaseUploads_Status_CreatedAtUtc
+                ON ReleaseUploads(Status, CreatedAtUtc);
+            """, cancellationToken);
 
         var connection = db.Database.GetDbConnection();
         var closeWhenDone = connection.State != System.Data.ConnectionState.Open;
@@ -131,6 +153,32 @@ public static class DatabaseSchema
         {
             if (!await HasColumnAsync(connection, "ComponentAssets", "Architecture", cancellationToken))
                 await RebuildComponentAssetsAsync(connection, cancellationToken);
+            await EnsureColumnAsync(connection, "ComponentAssets", "ObjectKey", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ComponentAssets", "ReleaseKeyId", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ComponentAssets", "ManifestBase64", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ComponentAssets", "ReleaseSignatureBase64", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ReleaseUploads", "MultipartUploadId", "TEXT NULL", cancellationToken);
+
+            await EnsureColumnAsync(connection, "ConnectionRequests", "StatusChangedAtUtc", "TEXT NULL", cancellationToken);
+            await using (var retention = connection.CreateCommand())
+            {
+                retention.CommandText = """
+                    UPDATE ConnectionRequests
+                    SET StatusChangedAtUtc = COALESCE(
+                        (SELECT MAX(OccurredAtUtc) FROM AuditEvents
+                         WHERE EntityType = 'ConnectionRequest'
+                           AND EntityId = CAST(ConnectionRequests.Id AS TEXT)
+                           AND Action = 'ConnectionRequest.StatusChanged'), CreatedAtUtc)
+                    WHERE StatusChangedAtUtc IS NULL;
+                    """;
+                await retention.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await EnsureColumnAsync(connection, "ConnectionRequests", "ProcessingLegalBasis", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ConnectionRequests", "PrivacyPolicyVersion", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ConnectionRequests", "ConsentVersion", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ConnectionRequests", "ConsentText", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(connection, "ConnectionRequests", "ConsentReceivedAtUtc", "TEXT NULL", cancellationToken);
 
             await using var columns = connection.CreateCommand();
             columns.CommandText = "PRAGMA table_info(Licenses);";

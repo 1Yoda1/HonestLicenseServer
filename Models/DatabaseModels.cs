@@ -93,7 +93,31 @@ public class ComponentAsset
     public string? YandexPath { get; set; }
     public string? Sha256 { get; set; }
     public long? SizeBytes { get; set; }
+    public string? ObjectKey { get; set; }
+    public string? ReleaseKeyId { get; set; }
+    public string? ManifestBase64 { get; set; }
+    public string? ReleaseSignatureBase64 { get; set; }
     public DateTime UpdatedAtUtc { get; set; }
+}
+
+public class ReleaseUpload
+{
+    public int Id { get; set; }
+    public required string Component { get; set; }
+    public required string Version { get; set; }
+    public required string Architecture { get; set; }
+    public required string FileName { get; set; }
+    public required string ObjectKey { get; set; }
+    public string? MultipartUploadId { get; set; }
+    public long SizeBytes { get; set; }
+    public required string Sha256 { get; set; }
+    public required string ReleaseKeyId { get; set; }
+    public required string ManifestBase64 { get; set; }
+    public required string ReleaseSignatureBase64 { get; set; }
+    public required string Status { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime UploadUrlExpiresAtUtc { get; set; }
+    public DateTime? CompletedAtUtc { get; set; }
 }
 
 public class ClientSetting
@@ -246,6 +270,12 @@ public class RemoteAccessCredential
 public class ConnectionRequest
 {
     public int Id { get; set; }
+    public DateTime? StatusChangedAtUtc { get; set; }
+    public string? ProcessingLegalBasis { get; set; }
+    public string? PrivacyPolicyVersion { get; set; }
+    public string? ConsentVersion { get; set; }
+    public string? ConsentText { get; set; }
+    public DateTime? ConsentReceivedAtUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; }
     public required string ContactName { get; set; }
     public string? Company { get; set; }
@@ -259,6 +289,7 @@ public class ConnectionRequest
     public required string Status { get; set; }
     public string? IpAddress { get; set; }
     public string? UserAgent { get; set; }
+    // Historical SMTP delivery metadata; new requests do not send email.
     public DateTime? NotificationSentAtUtc { get; set; }
     public string? NotificationError { get; set; }
 }

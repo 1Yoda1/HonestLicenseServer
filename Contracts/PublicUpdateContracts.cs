@@ -7,4 +7,7 @@ public sealed record HonestFlowUpdateResponse(
     string Architecture,
     long SizeBytes,
     string Sha256,
-    string DownloadUrl);
+    string DownloadUrl,
+    string? ReleaseKeyId,
+    string? ManifestBase64,
+    string? ReleaseSignatureBase64);

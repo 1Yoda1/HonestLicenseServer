@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace HonestLicenseServer.Controllers;
 
@@ -13,9 +14,27 @@ namespace HonestLicenseServer.Controllers;
 [Route("api/connection-requests")]
 public sealed class ConnectionRequestsController(
     HonestDbContext db,
-    IConnectionRequestNotifier notifier,
+    IOptionsSnapshot<ConnectionRequestPrivacyOptions> privacyOptions,
     ILogger<ConnectionRequestsController> logger) : ControllerBase
 {
+    [HttpGet("policy")]
+    [AllowAnonymous]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public IActionResult Policy()
+    {
+        var privacy = privacyOptions.Value;
+        if (!privacy.IsReady) return Ok(new { available = false });
+        return Ok(new
+        {
+            available = true,
+            consentRequired = privacy.ConsentRequired,
+            privacyPolicyVersion = privacy.PrivacyPolicyVersion,
+            privacyPolicyText = privacy.PrivacyPolicyText,
+            consentVersion = privacy.ConsentRequired ? privacy.ConsentVersion : null,
+            consentText = privacy.ConsentRequired ? privacy.ConsentText : null
+        });
+    }
+
     [HttpPost]
     [AllowAnonymous]
     [EnableRateLimiting("connection-requests")]
@@ -25,15 +44,35 @@ public sealed class ConnectionRequestsController(
     [ProducesResponseType<ConnectionRequestErrorResponse>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ConnectionRequestErrorResponse>(StatusCodes.Status500InternalServerError)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<ConnectionRequestCreatedResponse>> Create(
         CreateConnectionRequest request, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(request.Website))
             return NoContent();
 
+        var privacy = privacyOptions.Value;
+        if (!privacy.IsReady)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new ConnectionRequestErrorResponse(false, "Приём заявок через сайт временно недоступен."));
+        if (request.PrivacyPolicyVersion != privacy.PrivacyPolicyVersion ||
+            (privacy.ConsentRequired && request.ConsentVersion != privacy.ConsentVersion))
+            return Conflict(new ConnectionRequestErrorResponse(false,
+                "Документы обновились. Ознакомьтесь с ними и отправьте заявку повторно."));
+        if (privacy.ConsentRequired && !request.Consent)
+            return BadRequest(new ConnectionRequestErrorResponse(false,
+                "Для отправки заявки необходимо отдельное согласие на обработку персональных данных."));
+
         var item = new ConnectionRequest
         {
             CreatedAtUtc = DateTime.UtcNow,
+            StatusChangedAtUtc = DateTime.UtcNow,
+            ProcessingLegalBasis = privacy.LegalBasis,
+            PrivacyPolicyVersion = privacy.PrivacyPolicyVersion,
+            ConsentVersion = privacy.ConsentRequired ? privacy.ConsentVersion : null,
+            ConsentText = privacy.ConsentRequired ? privacy.ConsentText : null,
+            ConsentReceivedAtUtc = privacy.ConsentRequired ? DateTime.UtcNow : null,
             ContactName = request.ContactName.Trim(),
             Company = Clean(request.Company),
             Phone = request.Phone.Trim(),
@@ -58,26 +97,6 @@ public sealed class ConnectionRequestsController(
             logger.LogError(exception, "Could not save connection request");
             return StatusCode(StatusCodes.Status500InternalServerError,
                 new ConnectionRequestErrorResponse(false, "Не удалось отправить заявку. Попробуйте позже."));
-        }
-
-        try
-        {
-            await notifier.NotifyAsync(item, cancellationToken);
-            item.NotificationSentAtUtc = DateTime.UtcNow;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            item.NotificationError = Truncate(exception.Message, 2000);
-            logger.LogError(exception, "Connection request {RequestId} saved, but notification failed", item.Id);
-        }
-
-        try
-        {
-            await db.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException exception)
-        {
-            logger.LogError(exception, "Could not update notification state for connection request {RequestId}", item.Id);
         }
 
         return StatusCode(StatusCodes.Status201Created,

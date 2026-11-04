@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="HonestFlow Service — обслуживание кассового рабочего места">
+  <rect width="1200" height="630" fill="#f4f1e9"/>
+  <path fill="#132a2f" d="M116 80 172 110v68l-56 30-56-30v-68z"/>
+  <text x="116" y="153" fill="#fffdf8" font-family="Segoe UI,Arial,sans-serif" font-size="34" font-weight="800" text-anchor="middle">HF</text>
+  <text x="210" y="155" fill="#132a2f" font-family="Segoe UI,Arial,sans-serif" font-size="48" font-weight="750">HonestFlow</text>
+  <text x="60" y="335" fill="#132a2f" font-family="Segoe UI,Arial,sans-serif" font-size="64" font-weight="760">Техническое обслуживание</text>
+  <text x="60" y="425" fill="#ff5c35" font-family="Segoe UI,Arial,sans-serif" font-size="64" font-weight="760">кассового рабочего места</text>
+  <text x="63" y="510" fill="#3b565c" font-family="Segoe UI,Arial,sans-serif" font-size="30">ККТ АТОЛ · 3 000 ₽/месяц за РМК · Поддержка 5/2</text>
+</svg>

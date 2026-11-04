@@ -5,6 +5,40 @@
     "version": "1.0"
   },
   "paths": {
+    "/api/admin/connection-requests/{id}": {
+      "delete": {
+        "tags": ["Admin"], "operationId": "Admin_DeleteConnectionRequest",
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"integer","format":"int32"}}],
+        "responses": {
+          "204":{"description":"Request and related audit erased from the working database; idempotent"},
+          "401":{"description":"Invalid admin key"},
+          "503":{"description":"Erasure or WAL cleanup pending; retry safely", "headers":{"Retry-After":{"schema":{"type":"string"}}}}
+        }, "security": [{"AdminKey":[]}]
+      }
+    },
+    "/api/admin/connection-requests": {
+      "get": {
+        "tags": ["Admin"], "operationId": "Admin_ConnectionRequests",
+        "parameters": [{"name":"status","in":"query","schema":{"type":"string","enum":["New","InProgress","Completed","Rejected"]}}],
+        "responses": {
+          "200": {"description":"Connection requests, newest first. Cache-Control: no-store.","content":{"application/json":{"schema":{"type":"array","items":{"$ref":"#/components/schemas/AdminConnectionRequestResponse"}}}}},
+          "400": {"description":"Invalid status filter"}, "401": {"description":"Invalid admin key"}
+        }, "security": [{"AdminKey":[]}]
+      }
+    },
+    "/api/admin/connection-requests/{id}/status": {
+      "put": {
+        "tags": ["Admin"], "operationId": "Admin_SetConnectionRequestStatus",
+        "parameters": [{"name":"id","in":"path","required":true,"schema":{"type":"integer","format":"int32"}}],
+        "requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UpdateConnectionRequestStatus"}}}},
+        "responses": {
+          "204":{"description":"Status saved; actual changes audited atomically"},
+          "400":{"description":"Invalid status"}, "401":{"description":"Invalid admin key"},
+          "404":{"description":"Request not found"}, "409":{"description":"Status differs from expectedStatus; reload before retrying"}
+        }, "security": [{"AdminKey":[]}]
+      }
+    },
+
     "/api/admin/remote-access/key": {
       "get": { "tags": [ "Admin" ], "operationId": "Admin_GetRemoteAccessKeyForAdmin", "responses": { "200": { "description": "Signed public key" }, "404": { "description": "Not configured" } }, "security": [ { "AdminKey": [ ] } ] },
       "put": { "tags": [ "Admin" ], "operationId": "Admin_PublishRemoteAccessKey", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PublishRemoteAccessKeyRequest" } } } }, "responses": { "204": { "description": "Published" }, "400": { "description": "Invalid key or signature" }, "409": { "description": "Key ID already exists" } }, "security": [ { "AdminKey": [ ] } ] }
@@ -483,8 +517,14 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "OK"
+          "204": {
+            "description": "Current version updated"
+          },
+          "400": {
+            "description": "Invalid component version"
+          },
+          "404": {
+            "description": "Published component asset was not found"
           }
         },
         "security": [
@@ -705,6 +745,63 @@
             "AdminKey": [ ]
           }
         ]
+      }
+    },
+    "/api/admin/release-uploads": {
+      "post": {
+        "tags": [ "Admin" ],
+        "operationId": "Admin_CreateReleaseUpload",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateReleaseUploadRequest" } }
+          }
+        },
+        "responses": {
+          "200": { "description": "Release upload created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReleaseUploadResponse" } } } },
+          "400": { "description": "Invalid manifest or signature" },
+          "409": { "description": "Release version already exists" },
+          "503": { "description": "Release storage unavailable" }
+        },
+        "security": [ { "AdminKey": [ ] } ]
+      }
+    },
+    "/api/admin/release-uploads/{id}/parts/{partNumber}": {
+      "post": {
+        "tags": [ "Admin" ],
+        "operationId": "Admin_CreateReleaseUploadPartUrl",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int32" } },
+          { "name": "partNumber", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 10000 } }
+        ],
+        "responses": {
+          "200": { "description": "Short-lived multipart part URL", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReleaseUploadPartResponse" } } } },
+          "400": { "description": "Invalid part number" },
+          "404": { "description": "Upload not found" },
+          "409": { "description": "Upload is not a pending multipart upload" },
+          "503": { "description": "Release storage unavailable" }
+        },
+        "security": [ { "AdminKey": [ ] } ]
+      }
+    },
+    "/api/admin/release-uploads/{id}/complete": {
+      "post": {
+        "tags": [ "Admin" ],
+        "operationId": "Admin_CompleteReleaseUpload",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int32" } } ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CompleteReleaseUploadRequest" } }
+          }
+        },
+        "responses": {
+          "204": { "description": "Release verified and catalogued" },
+          "404": { "description": "Upload not found" },
+          "409": { "description": "Upload incomplete or object integrity mismatch" },
+          "503": { "description": "Release storage unavailable" }
+        },
+        "security": [ { "AdminKey": [ ] } ]
       }
     },
     "/api/admin/clients/{clientId}/component-versions": {
@@ -929,8 +1026,11 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "OK"
+          "204": {
+            "description": "Component override updated"
+          },
+          "404": {
+            "description": "Client or matching component asset was not found"
           }
         },
         "security": [
@@ -1512,6 +1612,21 @@
         ]
       }
     },
+    "/api/connection-requests/policy": {
+      "get": {
+        "tags": ["ConnectionRequests"],
+        "operationId": "ConnectionRequests_Policy",
+        "description": "Approved website documents only; available=false until configured. Cache-Control: no-store.",
+        "responses": { "200": { "description": "Current approved documents or unavailable status", "content": { "application/json": { "schema": { "type": "object", "required": ["available"], "properties": {
+          "available": { "type": "boolean" },
+          "consentRequired": { "type": "boolean" },
+          "privacyPolicyVersion": { "type": "string" },
+          "privacyPolicyText": { "type": "string" },
+          "consentVersion": { "type": "string", "nullable": true },
+          "consentText": { "type": "string", "nullable": true }
+        } } } } } }
+      }
+    },
     "/api/connection-requests": {
       "post": {
         "tags": [
@@ -1538,6 +1653,9 @@
           }
         },
         "responses": {
+          "409": { "description": "Missing or outdated document version" },
+          "503": { "description": "Website request intake is disabled or documents are not approved" },
+          "415": { "description": "JSON request body required" },
           "201": {
             "description": "Created",
             "content": {
@@ -2047,6 +2165,18 @@
         ]
       }
     },
+    "/api/downloads/honestflow/setup": {
+      "get": {
+        "tags": [ "PublicDownloads" ],
+        "operationId": "PublicDownloads_DownloadSetup",
+        "responses": {
+          "302": { "description": "Redirect to a short-lived Cloud.ru download URL" },
+          "404": { "description": "Installer is not published" },
+          "503": { "description": "Release storage is unavailable" }
+        },
+        "security": [ ]
+      }
+    },
     "/api/updates/honestflow/current": {
       "get": {
         "tags": [ "PublicHonestFlowUpdate" ],
@@ -2135,6 +2265,27 @@
   },
   "components": {
     "schemas": {
+      "UpdateConnectionRequestStatus": {
+        "type":"object","required":["status","expectedStatus"],
+        "properties": {
+          "status":{"type":"string","enum":["New","InProgress","Completed","Rejected"]},
+          "expectedStatus":{"type":"string","enum":["New","InProgress","Completed","Rejected"]}
+        }
+      },
+      "AdminConnectionRequestResponse": {
+        "type":"object",
+        "required":["id","createdAtUtc","contactName","phone","workplaceCount","status"],
+        "properties": {
+          "id":{"type":"integer","format":"int32"}, "createdAtUtc":{"type":"string","format":"date-time"},
+          "contactName":{"type":"string"}, "company":{"type":"string","nullable":true},
+          "phone":{"type":"string"}, "email":{"type":"string","nullable":true},
+          "city":{"type":"string","nullable":true}, "workplaceCount":{"type":"integer","format":"int32"},
+          "inventorySystem":{"type":"string","nullable":true}, "comment":{"type":"string","nullable":true},
+          "source":{"type":"string","nullable":true},
+          "status":{"type":"string","enum":["New","InProgress","Completed","Rejected"]}
+        }
+      },
+
       "PublishRemoteAccessKeyRequest": {
         "type": "object",
         "required": [ "keyId", "publicKeyBase64", "signatureBase64", "signingKeyId" ],
@@ -2261,6 +2412,18 @@
           },
           "isOverride": {
             "type": "boolean"
+          },
+          "releaseKeyId": {
+            "type": "string",
+            "nullable": true
+          },
+          "manifestBase64": {
+            "type": "string",
+            "nullable": true
+          },
+          "releaseSignatureBase64": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -2356,7 +2519,11 @@
       },
       "CreateConnectionRequest": {
         "type": "object",
+        "required": ["contactName", "phone", "city", "workplaceCount"],
         "properties": {
+          "consent": { "type": "boolean", "default": false, "description": "Required true for bundled revision 1.0; separate consent is mandatory." },
+          "consentVersion": { "type": "string", "maxLength": 100, "nullable": true, "description": "Must equal bundled consent version 1.0." },
+          "privacyPolicyVersion": { "type": "string", "maxLength": 100, "nullable": true, "description": "Must equal bundled privacy policy version 1.0." },
           "contactName": {
             "type": "string",
             "nullable": true
@@ -2751,6 +2918,66 @@
         },
         "additionalProperties": false
       },
+      "CreateReleaseUploadRequest": {
+        "type": "object",
+        "required": [ "keyId", "manifestBase64", "signatureBase64" ],
+        "properties": {
+          "keyId": { "type": "string" },
+          "manifestBase64": { "type": "string" },
+          "signatureBase64": { "type": "string" },
+          "useMultipart": { "type": "boolean", "default": false }
+        },
+        "additionalProperties": false
+      },
+      "ReleaseUploadResponse": {
+        "type": "object",
+        "required": [ "id", "component", "version", "architecture", "fileName", "sizeBytes", "sha256", "uploadUrlExpiresAtUtc" ],
+        "properties": {
+          "id": { "type": "integer", "format": "int32" },
+          "component": { "type": "string" },
+          "version": { "type": "string" },
+          "architecture": { "type": "string" },
+          "fileName": { "type": "string" },
+          "sizeBytes": { "type": "integer", "format": "int64" },
+          "sha256": { "type": "string" },
+          "uploadUrl": { "type": "string", "format": "uri", "nullable": true },
+          "uploadUrlExpiresAtUtc": { "type": "string", "format": "date-time" },
+          "partSizeBytes": { "type": "integer", "format": "int64", "nullable": true },
+          "partCount": { "type": "integer", "format": "int32", "nullable": true }
+        },
+        "additionalProperties": false
+      },
+      "ReleaseUploadPartResponse": {
+        "type": "object",
+        "required": [ "partNumber", "uploadUrl", "uploadUrlExpiresAtUtc" ],
+        "properties": {
+          "partNumber": { "type": "integer", "format": "int32" },
+          "uploadUrl": { "type": "string", "format": "uri" },
+          "uploadUrlExpiresAtUtc": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      },
+      "CompleteReleaseUploadRequest": {
+        "type": "object",
+        "required": [ "parts" ],
+        "properties": {
+          "parts": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/components/schemas/CompletedReleaseUploadPart" }
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompletedReleaseUploadPart": {
+        "type": "object",
+        "required": [ "partNumber", "eTag" ],
+        "properties": {
+          "partNumber": { "type": "integer", "format": "int32", "minimum": 1, "maximum": 10000 },
+          "eTag": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "additionalProperties": false
+      },
       "PutComponentOverrideRequest": {
         "type": "object",
         "properties": {
@@ -2903,7 +3130,10 @@
           "downloadUrl": { "type": "string", "nullable": true },
           "sha256": { "type": "string", "nullable": true },
           "sizeBytes": { "type": "integer", "format": "int64", "nullable": true },
-          "architecture": { "type": "string", "nullable": true }
+          "architecture": { "type": "string", "nullable": true },
+          "releaseKeyId": { "type": "string", "nullable": true },
+          "manifestBase64": { "type": "string", "nullable": true },
+          "releaseSignatureBase64": { "type": "string", "nullable": true }
         },
         "additionalProperties": false
       },
@@ -2996,7 +3226,10 @@
           "architecture": { "type": "string" },
           "sizeBytes": { "type": "integer", "format": "int64" },
           "sha256": { "type": "string" },
-          "downloadUrl": { "type": "string" }
+          "downloadUrl": { "type": "string" },
+          "releaseKeyId": { "type": "string", "nullable": true },
+          "manifestBase64": { "type": "string", "nullable": true },
+          "releaseSignatureBase64": { "type": "string", "nullable": true }
         },
         "additionalProperties": false
       },

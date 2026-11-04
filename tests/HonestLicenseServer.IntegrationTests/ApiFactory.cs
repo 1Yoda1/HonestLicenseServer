@@ -25,9 +25,11 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     private string? _originalConnectionString;
     private string? _originalAdminKey;
     private string? _originalSigningKey;
+    private string? _originalReleaseSigningKey;
     private readonly ECDsa _signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     private string DatabasePath => Path.Combine(_directory, "integration.db");
     public FakeDiagnosticObjectStorage DiagnosticStorage { get; } = new();
+    public FakeReleaseObjectStorage ReleaseStorage { get; } = new();
 
     public async Task InitializeAsync()
     {
@@ -35,10 +37,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         _originalConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
         _originalAdminKey = Environment.GetEnvironmentVariable("AdminApi__Key");
         _originalSigningKey = Environment.GetEnvironmentVariable("LicenseSigningKeys__integration-key__PublicKeyBase64");
+        _originalReleaseSigningKey = Environment.GetEnvironmentVariable("ReleaseSigningKeys__integration-release__PublicKeyBase64");
         Environment.SetEnvironmentVariable("ConnectionStrings__DefaultConnection",
             $"Data Source={DatabasePath};Pooling=False");
         Environment.SetEnvironmentVariable("AdminApi__Key", AdminKey);
         Environment.SetEnvironmentVariable("LicenseSigningKeys__integration-key__PublicKeyBase64",
+            Convert.ToBase64String(_signingKey.ExportSubjectPublicKeyInfo()));
+        Environment.SetEnvironmentVariable("ReleaseSigningKeys__integration-release__PublicKeyBase64",
             Convert.ToBase64String(_signingKey.ExportSubjectPublicKeyInfo()));
         var options = new DbContextOptionsBuilder<HonestDbContext>()
             .UseSqlite($"Data Source={DatabasePath};Pooling=False").Options;
@@ -118,13 +123,16 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             {
                 ["ConnectionStrings:DefaultConnection"] = $"Data Source={DatabasePath};Pooling=False",
                 ["AdminApi:Key"] = AdminKey,
-                ["Smtp:Host"] = "",
-                ["Smtp:From"] = ""
+                ["ConnectionRequestPrivacy:Enabled"] = "true",
+                ["ConnectionRequestPrivacy:ApprovedDocumentVersion"] = "1.0",
+                ["ConnectionRequestPrivacy:LegalBasis"] = "Consent"
             }));
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IDiagnosticObjectStorage>();
             services.AddSingleton<IDiagnosticObjectStorage>(DiagnosticStorage);
+            services.RemoveAll<IReleaseObjectStorage>();
+            services.AddSingleton<IReleaseObjectStorage>(ReleaseStorage);
             services.AddTransient<IStartupFilter, UniqueLoopbackAddressStartupFilter>();
         });
     }
@@ -135,6 +143,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("ConnectionStrings__DefaultConnection", _originalConnectionString);
         Environment.SetEnvironmentVariable("AdminApi__Key", _originalAdminKey);
         Environment.SetEnvironmentVariable("LicenseSigningKeys__integration-key__PublicKeyBase64", _originalSigningKey);
+        Environment.SetEnvironmentVariable("ReleaseSigningKeys__integration-release__PublicKeyBase64", _originalReleaseSigningKey);
         _signingKey.Dispose();
         for (var attempt = 0; Directory.Exists(_directory) && attempt < 3; attempt++)
         {
@@ -151,6 +160,9 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public byte[] Sign(byte[] grantBytes) => _signingKey.SignData(grantBytes,
         HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+
+    public byte[] SignRelease(byte[] manifestBytes) => _signingKey.SignData(manifestBytes,
+        HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
 
     private static RefreshToken Session(int clientId, int? deviceId, string externalDeviceId,
         string accessToken, DateTime now) => new()
@@ -208,6 +220,81 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         public Task DeleteAsync(string objectKey, CancellationToken cancellationToken)
         {
             DeletedObjectKeys.Add(objectKey);
+            return Task.CompletedTask;
+        }
+    }
+
+    public sealed class FakeReleaseObjectStorage : IReleaseObjectStorage
+    {
+        private byte[] _uploadedBytes = [];
+        private bool _objectAvailable;
+
+        public bool IsConfigured => true;
+        public byte[] UploadedBytes
+        {
+            get => _uploadedBytes;
+            set
+            {
+                _uploadedBytes = value;
+                if (LastMultipartUploadId is null) _objectAvailable = value.Length > 0;
+            }
+        }
+        public string? LastObjectKey { get; private set; }
+        public string? LastMultipartUploadId { get; private set; }
+        public IReadOnlyList<ReleaseMultipartPart> CompletedParts { get; private set; } = [];
+        public HashSet<string> DeletedObjectKeys { get; } = [];
+        public HashSet<string> AbortedMultipartUploadIds { get; } = [];
+
+        public string CreateUploadUrl(string objectKey, DateTime expiresAtUtc)
+        {
+            LastObjectKey = objectKey;
+            LastMultipartUploadId = null;
+            CompletedParts = [];
+            _objectAvailable = false;
+            return $"https://storage.test/{objectKey}?upload=1";
+        }
+
+        public string CreateDownloadUrl(string objectKey, string fileName, DateTime expiresAtUtc) =>
+            $"https://storage.test/{objectKey}?download=1";
+
+        public Task<string> InitiateMultipartUploadAsync(
+            string objectKey, CancellationToken cancellationToken)
+        {
+            LastObjectKey = objectKey;
+            LastMultipartUploadId = "multipart-test-upload";
+            CompletedParts = [];
+            _objectAvailable = false;
+            return Task.FromResult(LastMultipartUploadId);
+        }
+
+        public string CreateMultipartPartUploadUrl(string objectKey, string uploadId, int partNumber,
+            DateTime expiresAtUtc) =>
+            $"https://storage.test/{objectKey}?uploadId={uploadId}&partNumber={partNumber}";
+
+        public Task CompleteMultipartUploadAsync(string objectKey, string uploadId,
+            IReadOnlyList<ReleaseMultipartPart> parts, CancellationToken cancellationToken)
+        {
+            CompletedParts = parts;
+            _objectAvailable = _uploadedBytes.Length > 0;
+            return Task.CompletedTask;
+        }
+
+        public Task AbortMultipartUploadAsync(
+            string objectKey, string uploadId, CancellationToken cancellationToken)
+        {
+            AbortedMultipartUploadIds.Add(uploadId);
+            return Task.CompletedTask;
+        }
+
+        public Task<ReleaseObjectInfo?> GetInfoAsync(string objectKey, CancellationToken cancellationToken) =>
+            Task.FromResult<ReleaseObjectInfo?>(!_objectAvailable
+                ? null
+                : new ReleaseObjectInfo(_uploadedBytes.LongLength));
+
+        public Task DeleteAsync(string objectKey, CancellationToken cancellationToken)
+        {
+            DeletedObjectKeys.Add(objectKey);
+            _objectAvailable = false;
             return Task.CompletedTask;
         }
     }

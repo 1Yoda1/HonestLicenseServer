@@ -82,7 +82,8 @@ public sealed class ServiceInstallationController(
                 $"{Request.Scheme}://{Request.Host}/api/assets/install/" +
                 $"{Uri.EscapeDataString(asset.Component)}/{Uri.EscapeDataString(asset.Version)}/download";
             return new ServiceInstallComponentResponse(version.Application, version.CurrentVersion,
-                asset?.FileName, downloadUrl, asset?.Sha256, asset?.SizeBytes, asset?.Architecture);
+                asset?.FileName, downloadUrl, asset?.Sha256, asset?.SizeBytes, asset?.Architecture,
+                asset?.ReleaseKeyId, asset?.ManifestBase64, asset?.ReleaseSignatureBase64);
         }).ToArray();
     }
 

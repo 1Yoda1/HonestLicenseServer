@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="HonestFlow">
+  <path fill="#132a2f" d="M32 2 58 16v32L32 62 6 48V16z"/>
+  <text x="32" y="39" fill="#fffdf8" font-family="Segoe UI,Arial,sans-serif" font-size="19" font-weight="800" text-anchor="middle">HF</text>
+</svg>

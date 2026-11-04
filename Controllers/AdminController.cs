@@ -16,10 +16,14 @@ namespace HonestLicenseServer.Controllers;
 [Route("api/admin")]
 public class AdminController(HonestDbContext db, IConfiguration configuration,
     LicenseSignatureVerifier signatureVerifier,
+    ReleaseManifestSignatureVerifier releaseManifestVerifier,
     ServiceInstallTokenStore serviceInstallTokens,
     IDiagnosticObjectStorage diagnosticStorage,
+    IReleaseObjectStorage releaseStorage,
     IOptions<DiagnosticStorageOptions> diagnosticOptions) : ControllerBase
 {
+    private const long ReleaseMultipartPartSizeBytes = 8L * 1024 * 1024;
+
     [HttpGet("remote-access/key")]
     public async Task<IActionResult> GetRemoteAccessKeyForAdmin()
     {
@@ -397,10 +401,16 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
     public async Task<IActionResult> PutVersion(string application, PutVersionRequest request)
     {
         if (!IsAdmin()) return AdminUnauthorized();
+        var currentVersion = request.CurrentVersion?.Trim();
+        if (string.IsNullOrWhiteSpace(currentVersion) || currentVersion.Length > 100)
+            return BadRequest(new { error = "invalid_component_version" });
+        if (!await db.ComponentAssets.AnyAsync(x =>
+                x.Component == application && x.Version == currentVersion))
+            return NotFound(new { error = "component_asset_not_found" });
         var version = await db.AppVersions.SingleOrDefaultAsync(x => x.Application == application);
-        if (version is null) { version = new AppVersion { Application = application, CurrentVersion = request.CurrentVersion, ImportedAtUtc = DateTime.UtcNow }; db.AppVersions.Add(version); }
-        else { version.CurrentVersion = request.CurrentVersion; version.ImportedAtUtc = DateTime.UtcNow; }
-        AddAudit("Version.Updated", "AppVersion", application, null, new { request.CurrentVersion });
+        if (version is null) { version = new AppVersion { Application = application, CurrentVersion = currentVersion, ImportedAtUtc = DateTime.UtcNow }; db.AppVersions.Add(version); }
+        else { version.CurrentVersion = currentVersion; version.ImportedAtUtc = DateTime.UtcNow; }
+        AddAudit("Version.Updated", "AppVersion", application, null, new { CurrentVersion = currentVersion });
         await db.SaveChangesAsync(); return NoContent();
     }
 
@@ -491,9 +501,177 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         return Ok(await query.OrderBy(x => x.Component).ThenByDescending(x => x.Version)
             .ThenBy(x => x.Architecture)
             .Select(x => new { x.Component, x.Version, x.Architecture, x.FileName,
-                x.DownloadUrl, x.YandexPublicKey, x.YandexPath,
-                x.Sha256, x.SizeBytes, x.UpdatedAtUtc }).ToListAsync());
+                x.DownloadUrl, x.YandexPublicKey, x.YandexPath, x.ObjectKey,
+                x.Sha256, x.SizeBytes, x.ReleaseKeyId, x.ManifestBase64,
+                x.ReleaseSignatureBase64, x.UpdatedAtUtc }).ToListAsync());
     }
+
+    [HttpPost("release-uploads")]
+    public async Task<IActionResult> CreateReleaseUpload(CreateReleaseUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        if (!releaseStorage.IsConfigured)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "release_storage_unavailable" });
+        if (!releaseManifestVerifier.TryVerify(request.KeyId.Trim(), request.ManifestBase64,
+                request.SignatureBase64, out VerifiedReleaseManifest? manifest, out string error))
+            return BadRequest(new { error });
+        VerifiedReleaseManifest verified = manifest!;
+        ComponentAsset? existingAsset = await db.ComponentAssets.SingleOrDefaultAsync(
+            x => x.Component == verified.Component && x.Version == verified.Version &&
+                 x.Architecture == verified.Architecture, cancellationToken);
+        if (existingAsset is not null && IsSignedReleaseAsset(existingAsset))
+            return Conflict(new { error = "release_version_already_exists" });
+
+        DateTime now = DateTime.UtcNow;
+        DateTime uploadExpires = now.AddMinutes(Math.Clamp(diagnosticOptions.Value.UploadUrlMinutes, 5, 60));
+        string objectKey = $"releases/{now:yyyy}/{Guid.NewGuid():N}/{verified.FileName}";
+        string? multipartUploadId = request.UseMultipart
+            ? await releaseStorage.InitiateMultipartUploadAsync(objectKey, cancellationToken)
+            : null;
+        var upload = new ReleaseUpload
+        {
+            Component = verified.Component, Version = verified.Version,
+            Architecture = verified.Architecture, FileName = verified.FileName,
+            ObjectKey = objectKey, MultipartUploadId = multipartUploadId,
+            SizeBytes = verified.SizeBytes, Sha256 = verified.Sha256,
+            ReleaseKeyId = request.KeyId.Trim(), ManifestBase64 = request.ManifestBase64,
+            ReleaseSignatureBase64 = request.SignatureBase64, Status = "Pending",
+            CreatedAtUtc = now, UploadUrlExpiresAtUtc = uploadExpires
+        };
+        db.ReleaseUploads.Add(upload);
+        try { await db.SaveChangesAsync(cancellationToken); }
+        catch
+        {
+            if (multipartUploadId is not null)
+                await releaseStorage.AbortMultipartUploadAsync(objectKey, multipartUploadId, cancellationToken);
+            throw;
+        }
+        AddAudit("ReleaseUpload.Created", "ReleaseUpload", upload.Id.ToString(), null,
+            new { upload.Component, upload.Version, upload.Architecture, upload.FileName,
+                multipart = multipartUploadId is not null });
+        await db.SaveChangesAsync(cancellationToken);
+        string? uploadUrl = multipartUploadId is null
+            ? releaseStorage.CreateUploadUrl(objectKey, uploadExpires)
+            : null;
+        int? partCount = multipartUploadId is null ? null : GetReleasePartCount(upload.SizeBytes);
+        return Ok(new ReleaseUploadResponse(upload.Id, upload.Component, upload.Version,
+            upload.Architecture, upload.FileName, upload.SizeBytes, upload.Sha256,
+            uploadUrl, uploadExpires,
+            multipartUploadId is null ? null : ReleaseMultipartPartSizeBytes, partCount));
+    }
+
+    [HttpPost("release-uploads/{id:int}/parts/{partNumber:int}")]
+    public async Task<IActionResult> CreateReleaseUploadPartUrl(
+        int id, int partNumber, CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        if (!releaseStorage.IsConfigured)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "release_storage_unavailable" });
+        ReleaseUpload? upload = await db.ReleaseUploads.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (upload is null) return NotFound(new { error = "release_upload_not_found" });
+        if (upload.Status != "Pending")
+            return Conflict(new { error = "release_upload_not_pending" });
+        if (string.IsNullOrWhiteSpace(upload.MultipartUploadId))
+            return Conflict(new { error = "release_upload_not_multipart" });
+        int partCount = GetReleasePartCount(upload.SizeBytes);
+        if (partNumber < 1 || partNumber > partCount)
+            return BadRequest(new { error = "invalid_release_part_number" });
+
+        DateTime expiresAtUtc = DateTime.UtcNow.AddMinutes(
+            Math.Clamp(diagnosticOptions.Value.UploadUrlMinutes, 5, 60));
+        string url = releaseStorage.CreateMultipartPartUploadUrl(
+            upload.ObjectKey, upload.MultipartUploadId, partNumber, expiresAtUtc);
+        return Ok(new ReleaseUploadPartResponse(partNumber, url, expiresAtUtc));
+    }
+
+    [HttpPost("release-uploads/{id:int}/complete")]
+    public async Task<IActionResult> CompleteReleaseUpload(int id,
+        CompleteReleaseUploadRequest? request, CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        if (!releaseStorage.IsConfigured)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "release_storage_unavailable" });
+        ReleaseUpload? upload = await db.ReleaseUploads.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (upload is null) return NotFound(new { error = "release_upload_not_found" });
+        if (upload.Status == "Available") return NoContent();
+        if (upload.Status != "Pending") return Conflict(new { error = "release_upload_not_pending" });
+        if (!releaseManifestVerifier.TryVerify(upload.ReleaseKeyId, upload.ManifestBase64,
+                upload.ReleaseSignatureBase64, out VerifiedReleaseManifest? manifest, out string error) ||
+            manifest!.Component != upload.Component || manifest.Version != upload.Version ||
+            manifest.Architecture != upload.Architecture || manifest.FileName != upload.FileName ||
+            manifest.SizeBytes != upload.SizeBytes || manifest.Sha256 != upload.Sha256)
+            return Conflict(new { error = string.IsNullOrWhiteSpace(error) ? "release_manifest_changed" : error });
+
+        ReleaseObjectInfo? info = await releaseStorage.GetInfoAsync(upload.ObjectKey, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(upload.MultipartUploadId) && info is null)
+        {
+            int expectedPartCount = GetReleasePartCount(upload.SizeBytes);
+            if (request?.Parts is null || request.Parts.Count != expectedPartCount ||
+                request.Parts.Select(x => x.PartNumber).Distinct().Count() != expectedPartCount ||
+                request.Parts.Any(x => x.PartNumber < 1 || x.PartNumber > expectedPartCount ||
+                                       string.IsNullOrWhiteSpace(x.ETag)))
+                return BadRequest(new { error = "invalid_release_multipart_parts" });
+            var parts = request.Parts.OrderBy(x => x.PartNumber)
+                .Select(x => new ReleaseMultipartPart(x.PartNumber, x.ETag.Trim())).ToList();
+            await releaseStorage.CompleteMultipartUploadAsync(
+                upload.ObjectKey, upload.MultipartUploadId, parts, cancellationToken);
+            info = await releaseStorage.GetInfoAsync(upload.ObjectKey, cancellationToken);
+        }
+        if (info is null) return Conflict(new { error = "release_upload_incomplete" });
+        if (info.SizeBytes != upload.SizeBytes)
+        {
+            await releaseStorage.DeleteAsync(upload.ObjectKey, cancellationToken);
+            upload.Status = "Rejected";
+            AddAudit("ReleaseUpload.Rejected", "ReleaseUpload", upload.Id.ToString(), null,
+                new { reason = "object_size_mismatch", info.SizeBytes });
+            await db.SaveChangesAsync(cancellationToken);
+            return Conflict(new { error = "release_object_size_mismatch" });
+        }
+        ComponentAsset? asset = await db.ComponentAssets.SingleOrDefaultAsync(
+            x => x.Component == upload.Component && x.Version == upload.Version &&
+                 x.Architecture == upload.Architecture, cancellationToken);
+        if (asset is not null && IsSignedReleaseAsset(asset))
+            return Conflict(new { error = "release_version_already_exists" });
+
+        bool migratedLegacyAsset = asset is not null;
+        asset ??= new ComponentAsset
+        {
+            Component = upload.Component, Version = upload.Version, Architecture = upload.Architecture,
+            FileName = upload.FileName
+        };
+        if (!migratedLegacyAsset) db.ComponentAssets.Add(asset);
+        asset.FileName = upload.FileName;
+        asset.DownloadUrl = null;
+        asset.YandexPublicKey = null;
+        asset.YandexPath = null;
+        asset.ObjectKey = upload.ObjectKey;
+        asset.Sha256 = upload.Sha256;
+        asset.SizeBytes = upload.SizeBytes;
+        asset.ReleaseKeyId = upload.ReleaseKeyId;
+        asset.ManifestBase64 = upload.ManifestBase64;
+        asset.ReleaseSignatureBase64 = upload.ReleaseSignatureBase64;
+        asset.UpdatedAtUtc = DateTime.UtcNow;
+        upload.Status = "Available";
+        upload.CompletedAtUtc = DateTime.UtcNow;
+        AddAudit("ReleaseUpload.Completed", "ReleaseUpload", upload.Id.ToString(), null,
+            new { upload.Component, upload.Version, upload.Architecture, upload.FileName, migratedLegacyAsset });
+        await db.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    private static int GetReleasePartCount(long sizeBytes) =>
+        checked((int)((sizeBytes + ReleaseMultipartPartSizeBytes - 1) / ReleaseMultipartPartSizeBytes));
+
+    private static bool IsSignedReleaseAsset(ComponentAsset asset) =>
+        !string.IsNullOrWhiteSpace(asset.ObjectKey) ||
+        !string.IsNullOrWhiteSpace(asset.ReleaseKeyId) ||
+        !string.IsNullOrWhiteSpace(asset.ManifestBase64) ||
+        !string.IsNullOrWhiteSpace(asset.ReleaseSignatureBase64);
 
     [HttpPut("assets/{component}/{version}")]
     public async Task<IActionResult> PutAsset(string component, string version,
@@ -524,6 +702,8 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         }
         else
         {
+            if (!string.IsNullOrWhiteSpace(asset.ObjectKey))
+                return Conflict(new { error = "signed_release_is_immutable" });
             asset.FileName = request.FileName;
             asset.DownloadUrl = Clean(request.DownloadUrl);
             asset.YandexPublicKey = Clean(request.YandexPublicKey);
@@ -671,8 +851,10 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         }
         else
         {
+            var architecture = AssetsController.NormalizeArchitecture(client.Architecture);
             if (!await db.ComponentAssets.AnyAsync(x =>
-                    x.Component == component && x.Version == requiredVersion))
+                    x.Component == component && x.Version == requiredVersion &&
+                    (x.Architecture == architecture || x.Architecture == "any")))
                 return NotFound(new { error = "component_asset_not_found" });
             if (current is null)
             {
@@ -708,6 +890,68 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         await db.SaveChangesAsync();
         return NoContent();
     }
+
+    [HttpGet("connection-requests")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> ConnectionRequests(
+        [FromQuery] string? status = null, CancellationToken cancellationToken = default)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        if (status is not null && status is not ("New" or "InProgress" or "Completed" or "Rejected"))
+            return BadRequest(new { error = "invalid_connection_request_status" });
+        var query = db.ConnectionRequests.AsNoTracking().AsQueryable();
+        if (status is not null) query = query.Where(x => x.Status == status);
+        return Ok(await query.OrderByDescending(x => x.CreatedAtUtc).ThenByDescending(x => x.Id)
+            .Select(x => new AdminConnectionRequestResponse(
+                x.Id, x.CreatedAtUtc, x.ContactName, x.Company, x.Phone, x.Email,
+                x.City, x.WorkplaceCount, x.InventorySystem, x.Comment, x.Source, x.Status))
+            .ToListAsync(cancellationToken));
+    }
+
+    [HttpDelete("connection-requests/{id:int}")]
+    public async Task<IActionResult> DeleteConnectionRequest(
+        int id, [FromServices] ConnectionRequestDeletionService deletion, CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        try
+        {
+            await deletion.DeleteAsync(id, cancellationToken);
+            return NoContent();
+        }
+        catch (Exception exception) when (exception is ConnectionRequestErasurePendingException ||
+            exception is Microsoft.Data.Sqlite.SqliteException { SqliteErrorCode: 5 or 6 })
+        {
+            Response.Headers.RetryAfter = "15";
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { error = "connection_request_erasure_pending" });
+        }
+    }
+
+
+    [HttpPut("connection-requests/{id:int}/status")]
+    public async Task<IActionResult> SetConnectionRequestStatus(
+        int id, UpdateConnectionRequestStatus request, CancellationToken cancellationToken)
+    {
+        if (!IsAdmin()) return AdminUnauthorized();
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var item = await db.ConnectionRequests.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (item is null) return NotFound(new { error = "connection_request_not_found" });
+        if (item.Status != request.ExpectedStatus)
+            return Conflict(new { error = "connection_request_changed" });
+        if (item.Status == request.Status) return NoContent();
+        int updated = await db.ConnectionRequests
+            .Where(x => x.Id == id && x.Status == request.ExpectedStatus)
+            .ExecuteUpdateAsync(x => x.SetProperty(r => r.Status, request.Status)
+                .SetProperty(r => r.StatusChangedAtUtc, DateTime.UtcNow), cancellationToken);
+        if (updated == 0) return Conflict(new { error = "connection_request_changed" });
+        AddAudit("ConnectionRequest.StatusChanged", "ConnectionRequest", id.ToString(), null,
+            new { previousStatus = item.Status, status = request.Status });
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return NoContent();
+    }
+
 
     [HttpGet("support-requests")]
     public async Task<IActionResult> SupportRequests([FromQuery] string? status = null)

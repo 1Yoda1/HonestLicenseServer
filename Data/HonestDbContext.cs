@@ -13,6 +13,7 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
     public DbSet<AppVersion> AppVersions => Set<AppVersion>();
     public DbSet<ClientComponentVersion> ClientComponentVersions => Set<ClientComponentVersion>();
     public DbSet<ComponentAsset> ComponentAssets => Set<ComponentAsset>();
+    public DbSet<ReleaseUpload> ReleaseUploads => Set<ReleaseUpload>();
     public DbSet<ClientSetting> ClientSettings => Set<ClientSetting>();
     public DbSet<LicensePolicy> LicensePolicies => Set<LicensePolicy>();
     public DbSet<DeviceRegistrationRequest> DeviceRegistrationRequests => Set<DeviceRegistrationRequest>();
@@ -34,6 +35,7 @@ public class HonestDbContext(DbContextOptions<HonestDbContext> options) : DbCont
         b.Entity<AppVersion>().HasIndex(x => x.Application).IsUnique();
         b.Entity<ClientComponentVersion>().HasIndex(x => new { x.ClientId, x.Component }).IsUnique();
         b.Entity<ComponentAsset>().HasIndex(x => new { x.Component, x.Version, x.Architecture }).IsUnique();
+        b.Entity<ReleaseUpload>().HasIndex(x => x.ObjectKey).IsUnique();
         b.Entity<ClientSetting>().HasKey(x => x.ClientId);
         b.Entity<LicensePolicy>().HasKey(x => x.ClientId);
         b.Entity<DeviceRegistrationRequest>()

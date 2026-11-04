@@ -21,5 +21,6 @@ deploy/*.env
 # Logs and temporary files
 *.log
 *.tmp
+site/site.zip
 __pycache__/
 *.py[cod]
