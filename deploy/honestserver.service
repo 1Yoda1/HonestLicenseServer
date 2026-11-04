@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pavel-shadrov
-Group=pavel-shadrov
+User=honestflow-svc
+Group=honestflow-svc
 WorkingDirectory=/opt/honestserver
 ExecStart=/opt/honestserver/HonestLicenseServer
 EnvironmentFile=/etc/honestserver/honestserver.env
@@ -19,7 +19,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/honestserver
+UMask=0077
+ReadWritePaths=/var/lib/honestserver
 
 [Install]
 WantedBy=multi-user.target

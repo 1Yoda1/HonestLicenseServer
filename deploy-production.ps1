@@ -27,6 +27,15 @@ param(
 
     [string]$SshTarget = "pavel-shadrov@192.168.0.103",
 
+    [ValidatePattern('^[a-z_][a-z0-9_-]*[$]?$')]
+    [string]$DeploymentUser = "pavel-shadrov",
+
+    [ValidatePattern('^[a-z_][a-z0-9_-]*[$]?$')]
+    [string]$ServiceUser = "honestflow-svc",
+
+    [ValidatePattern('^[a-z_][a-z0-9_-]*[$]?$')]
+    [string]$ServiceGroup = "honestflow-svc",
+
     [switch]$ValidateOnly,
 
     [switch]$NoPause
@@ -110,7 +119,10 @@ function New-RemoteDeployScript {
         [string]$DeployMode,
         [string]$ExpectedSha256,
         [string]$ExpectedTable,
-        [string]$ExpectedColumnName
+        [string]$ExpectedColumnName,
+        [string]$RemoteDeploymentUser,
+        [string]$RemoteServiceUser,
+        [string]$RemoteServiceGroup
     )
 
     $bash = @'
@@ -123,14 +135,19 @@ EXPECTED_SHA256="__EXPECTED_SHA256__"
 EXPECTED_TABLE="__EXPECTED_TABLE__"
 EXPECTED_COLUMN="__EXPECTED_COLUMN__"
 
-APP_USER="pavel-shadrov"
+DEPLOY_USER="__DEPLOY_USER__"
+SERVICE_USER="__SERVICE_USER__"
+SERVICE_GROUP="__SERVICE_GROUP__"
 SERVICE="honestserver"
 ROOT="/opt/honestserver"
 STAGING="$ROOT/.deploy"
-BACKUPS="$ROOT/backups"
+DATABASE_DIRECTORY="/var/lib/honestserver"
+BACKUPS="$DATABASE_DIRECTORY/backups"
 PRODUCTION_BINARY="$ROOT/HonestLicenseServer"
 UPLOAD_BINARY="$STAGING/HonestLicenseServer.upload"
-DATABASE="$ROOT/HonestLicenseFull.db"
+DATABASE="$DATABASE_DIRECTORY/HonestLicenseFull.db"
+DEFAULT_SETTINGS="$ROOT/appsettings.json"
+LOCAL_SETTINGS="$ROOT/appsettings.Local.json"
 LOCAL_SWAGGER="http://127.0.0.1:5498/swagger/v1/swagger.json"
 PUBLIC_SWAGGER="https://api.honestflow.ru/swagger/v1/swagger.json"
 HTTP_STATUS="000"
@@ -201,7 +218,7 @@ service_is_active() {
 sqlite_backup() {
     local source="$1"
     local destination="$2"
-    sudo -u "$APP_USER" python3 - "$source" "$destination" <<'PY'
+    sudo python3 - "$source" "$destination" <<'PY'
 import sqlite3
 import sys
 
@@ -222,7 +239,7 @@ PY
 sqlite_integrity_ok() {
     local database_path="$1"
     local result
-    result="$(sudo -u "$APP_USER" python3 - "$database_path" <<'PY'
+    result="$(sudo python3 - "$database_path" <<'PY'
 import sqlite3
 import sys
 
@@ -241,7 +258,7 @@ schema_column_exists() {
     local database_path="$1"
     local table="$2"
     local column="$3"
-    sudo -u "$APP_USER" python3 - "$database_path" "$table" "$column" <<'PY'
+    sudo python3 - "$database_path" "$table" "$column" <<'PY'
 import sqlite3
 import sys
 
@@ -261,14 +278,31 @@ PY
 
 verify_common_preconditions() {
     local command_name
-    for command_name in sudo systemctl install sha256sum file curl python3 date id awk; do
+    for command_name in sudo systemctl install sha256sum file curl python3 date id awk getent; do
         require_command "$command_name"
     done
 
     [[ "$MODE" == "CODE" || "$MODE" == "DATABASE" ]] || die "Unsupported mode: $MODE"
+    [[ "$(id -un)" == "$DEPLOY_USER" ]] || \
+        die "Remote deployment must run as $DEPLOY_USER, not $(id -un)."
+    id "$SERVICE_USER" >/dev/null 2>&1 || die "Service user was not found: $SERVICE_USER"
+    getent group "$SERVICE_GROUP" >/dev/null 2>&1 || die "Service group was not found: $SERVICE_GROUP"
     [[ -f "$UPLOAD_BINARY" ]] || die "Uploaded binary was not found: $UPLOAD_BINARY"
     [[ -f "$PRODUCTION_BINARY" ]] || die "Production binary was not found: $PRODUCTION_BINARY"
     [[ -d "$STAGING" && -w "$STAGING" ]] || die "Staging directory is unavailable or not writable: $STAGING"
+    [[ -d "$DATABASE_DIRECTORY" ]] || die "SQLite directory was not found: $DATABASE_DIRECTORY"
+    sudo -u "$SERVICE_USER" test -x "$PRODUCTION_BINARY" || \
+        die "Production binary is not executable by $SERVICE_USER: $PRODUCTION_BINARY"
+    sudo -u "$SERVICE_USER" test -r "$DATABASE_DIRECTORY" -a -w "$DATABASE_DIRECTORY" -a -x "$DATABASE_DIRECTORY" || \
+        die "Service user $SERVICE_USER does not have read/write/search access to $DATABASE_DIRECTORY."
+    if [[ -e "$DEFAULT_SETTINGS" ]]; then
+        sudo -u "$SERVICE_USER" test -r "$DEFAULT_SETTINGS" || \
+            die "Application configuration is not readable by $SERVICE_USER: $DEFAULT_SETTINGS"
+    fi
+    if [[ -e "$LOCAL_SETTINGS" ]]; then
+        sudo -u "$SERVICE_USER" test -r "$LOCAL_SETTINGS" || \
+            die "Optional local configuration is not readable by $SERVICE_USER: $LOCAL_SETTINGS"
+    fi
     verify_elf "$UPLOAD_BINARY" || die "Uploaded file is not a Linux x64 ELF binary."
 
     local uploaded_sha
@@ -294,15 +328,14 @@ prepare_files() {
     BACKUP_DIR="$BACKUPS/${backup_kind}-${TIMESTAMP}"
     BACKUP_BINARY="$BACKUP_DIR/HonestLicenseServer"
     PREPARED_BINARY="$STAGING/HonestLicenseServer.prepared-${TIMESTAMP}"
-    APP_GROUP="$(id -gn "$APP_USER")" || die "Unable to resolve group for $APP_USER."
     OLD_SHA256="$(sha256_file "$PRODUCTION_BINARY")" || die "Unable to calculate current binary SHA256."
 
     [[ ! -e "$BACKUP_DIR" ]] || die "Backup directory already exists: $BACKUP_DIR"
-    sudo install -d -m 775 -o "$APP_USER" -g "$APP_GROUP" "$BACKUP_DIR" || \
+    sudo install -d -m 700 -o root -g root "$BACKUP_DIR" || \
         die "Unable to create backup directory."
-    sudo install -m 775 -o "$APP_USER" -g "$APP_GROUP" \
+    sudo install -m 755 -o root -g root \
         "$PRODUCTION_BINARY" "$BACKUP_BINARY" || die "Unable to back up current binary."
-    sudo install -m 775 -o "$APP_USER" -g "$APP_GROUP" \
+    sudo install -m 755 -o root -g root \
         "$UPLOAD_BINARY" "$PREPARED_BINARY" || die "Unable to prepare new binary."
 
     local prepared_sha
@@ -321,8 +354,8 @@ stop_service() {
 
 install_prepared_binary() {
     sudo mv -f "$PREPARED_BINARY" "$PRODUCTION_BINARY" || return 1
-    sudo chown "$APP_USER:$APP_GROUP" "$PRODUCTION_BINARY" || return 1
-    sudo chmod 775 "$PRODUCTION_BINARY" || return 1
+    sudo chown root:root "$PRODUCTION_BINARY" || return 1
+    sudo chmod 755 "$PRODUCTION_BINARY" || return 1
 }
 
 rollback_code() {
@@ -333,7 +366,7 @@ rollback_code() {
         log "CRITICAL_ROLLBACK_NEEDS_MANUAL_CHECK"
         return 1
     fi
-    sudo install -m 775 -o "$APP_USER" -g "$APP_GROUP" \
+    sudo install -m 755 -o root -g root \
         "$BACKUP_BINARY" "$PREPARED_BINARY.rollback" || failed=1
     if [[ "$failed" -eq 0 ]]; then
         sudo mv -f "$PREPARED_BINARY.rollback" "$PRODUCTION_BINARY" || failed=1
@@ -409,9 +442,9 @@ rollback_database() {
         return 1
     fi
     sudo rm -f -- "$DATABASE" "${DATABASE}-wal" "${DATABASE}-shm" || failed=1
-    sudo install -m 660 -o "$APP_USER" -g "$APP_GROUP" \
+    sudo install -m 600 -o "$SERVICE_USER" -g "$SERVICE_GROUP" \
         "$database_backup" "$DATABASE" || failed=1
-    sudo install -m 775 -o "$APP_USER" -g "$APP_GROUP" \
+    sudo install -m 755 -o root -g root \
         "$BACKUP_BINARY" "$PREPARED_BINARY.rollback" || failed=1
     if [[ "$failed" -eq 0 ]]; then
         sudo mv -f "$PREPARED_BINARY.rollback" "$PRODUCTION_BINARY" || failed=1
@@ -508,7 +541,10 @@ esac
     return $bash.Replace("__MODE__", $DeployMode.ToUpperInvariant()).
         Replace("__EXPECTED_SHA256__", $ExpectedSha256.ToLowerInvariant()).
         Replace("__EXPECTED_TABLE__", $ExpectedTable).
-        Replace("__EXPECTED_COLUMN__", $ExpectedColumnName)
+        Replace("__EXPECTED_COLUMN__", $ExpectedColumnName).
+        Replace("__DEPLOY_USER__", $RemoteDeploymentUser).
+        Replace("__SERVICE_USER__", $RemoteServiceUser).
+        Replace("__SERVICE_GROUP__", $RemoteServiceGroup)
 }
 
 function Test-GeneratedBash {
@@ -525,7 +561,10 @@ function Test-GeneratedBash {
     $requiredMarkers = @(
         "deploy_code()", "deploy_database()", "rollback_code()", "rollback_database()",
         "sqlite_backup()", "PRAGMA integrity_check", "ROLLBACK_OK",
-        "CRITICAL_ROLLBACK_NEEDS_MANUAL_CHECK"
+        "CRITICAL_ROLLBACK_NEEDS_MANUAL_CHECK", "DEPLOY_USER=", "SERVICE_USER=",
+        'DATABASE_DIRECTORY="/var/lib/honestserver"', 'DEFAULT_SETTINGS="$ROOT/appsettings.json"',
+        'LOCAL_SETTINGS="$ROOT/appsettings.Local.json"',
+        'sudo install -m 600 -o "$SERVICE_USER"'
     )
     foreach ($marker in $requiredMarkers) {
         if (-not $Content.Contains($marker)) {
@@ -535,7 +574,6 @@ function Test-GeneratedBash {
 
     $forbiddenPatterns = @(
         '(?i)sshpass',
-        '(?i)appsettings\.Local\.json',
         '(?i)AdminApi.{0,3}Key',
         '(?i)private.{0,3}signing.{0,3}key'
     )
@@ -604,7 +642,8 @@ try {
         Write-Step 2 "Build skipped (-ValidateOnly)"
         Write-Step 3 "Generate and validate deploy.sh"
         $validationSha = "0" * 64
-        $content = New-RemoteDeployScript $Mode $validationSha $expectedTable $expectedColumnName
+        $content = New-RemoteDeployScript $Mode $validationSha $expectedTable $expectedColumnName `
+            $DeploymentUser $ServiceUser $ServiceGroup
         Write-Utf8NoBomLf $generatedBash $content
         Test-GeneratedBash $generatedBash $content
         Write-Step 4 "Upload skipped"
@@ -653,7 +692,8 @@ try {
     Write-Host "SHA256: $sha256"
     Write-Host ("Size: {0:N0} bytes ({1:N2} MiB)" -f $binaryInfo.Length, ($binaryInfo.Length / 1MB))
 
-    $content = New-RemoteDeployScript $Mode $sha256 $expectedTable $expectedColumnName
+    $content = New-RemoteDeployScript $Mode $sha256 $expectedTable $expectedColumnName `
+        $DeploymentUser $ServiceUser $ServiceGroup
     Write-Utf8NoBomLf $generatedBash $content
     Test-GeneratedBash $generatedBash $content
 

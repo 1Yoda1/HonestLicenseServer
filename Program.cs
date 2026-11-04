@@ -22,11 +22,10 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Не задана строка подключения DefaultConnection");
-var connectionStringBuilder = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString);
-if (!Path.IsPathRooted(connectionStringBuilder.DataSource))
-    connectionStringBuilder.DataSource = Path.GetFullPath(connectionStringBuilder.DataSource, AppContext.BaseDirectory);
+var databaseConfiguration = SqliteDatabaseConfigurationLoader.Load(
+    builder.Configuration,
+    builder.Environment.IsProduction(),
+    AppContext.BaseDirectory);
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler(options =>
@@ -104,7 +103,7 @@ builder.Services.AddSwaggerGen(options =>
     options.OperationFilter<OpenApiSecurityOperationFilter>();
 });
 builder.Services.AddDbContext<HonestDbContext>(options =>
-    options.UseSqlite(connectionStringBuilder.ConnectionString));
+    options.UseSqlite(databaseConfiguration.ConnectionString));
 builder.Services.Configure<ConnectionRequestPrivacyOptions>(builder.Configuration.GetSection("ConnectionRequestPrivacy"));
 builder.Services.Configure<DiagnosticStorageOptions>(builder.Configuration.GetSection("DiagnosticStorage"));
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -213,10 +212,11 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    if (!app.Environment.IsProduction())
+        await db.Database.EnsureCreatedAsync();
     await DatabaseSchema.EnsureCurrentAsync(db);
     if (!db.Database.CanConnect())
-        throw new InvalidOperationException($"Не удалось открыть базу данных: {connectionStringBuilder.DataSource}");
+        throw new InvalidOperationException($"Не удалось открыть базу данных: {databaseConfiguration.DataSource}");
 }
 
 app.UseExceptionHandler();
