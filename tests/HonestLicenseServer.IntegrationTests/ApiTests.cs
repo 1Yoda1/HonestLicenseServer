@@ -398,8 +398,11 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, reused.StatusCode);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", refreshedAccess);
+        var afterReuse = await client.GetAsync("/api/configuration/current");
+        Assert.Equal(HttpStatusCode.Unauthorized, afterReuse.StatusCode);
+
         var logout = await client.PostAsync("/api/auth/logout", null);
-        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, logout.StatusCode);
         var afterLogout = await client.GetAsync("/api/configuration/current");
         Assert.Equal(HttpStatusCode.Unauthorized, afterLogout.StatusCode);
 
