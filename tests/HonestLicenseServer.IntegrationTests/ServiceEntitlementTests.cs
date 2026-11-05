@@ -216,6 +216,24 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
         using var client = AuthenticatedClient(fixture.AccessToken);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/configuration/current")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/license/current")).StatusCode);
+        await AssertServiceRequiredAsync(await client.GetAsync("/api/configuration/service"));
+    }
+
+    [Fact]
+    public async Task Service_configuration_returns_sensitive_values_only_to_entitled_device()
+    {
+        var fixture = await CreateFixtureAsync();
+        await PublishGrantAsync(fixture, features: ["Service"]);
+
+        using var client = AuthenticatedClient(fixture.AccessToken);
+        var response = await client.GetAsync("/api/configuration/service");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(fixture.ExternalClientId, json.GetProperty("clientId").GetString());
+        Assert.Equal(fixture.ExternalDeviceId, json.GetProperty("deviceId").GetString());
+        Assert.Equal("service-identification-code", json.GetProperty("identificationCode").GetString());
+        Assert.Equal("service-chz-token", json.GetProperty("chzToken").GetString());
     }
 
     [Fact]
@@ -312,6 +330,12 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
             SourceRevision = 1,
             SourceIssuedAtUtc = now,
             SourceValidUntilUtc = now.AddDays(1)
+        });
+        db.ClientSettings.Add(new ClientSetting
+        {
+            ClientId = client.Id,
+            IdentificationCode = "service-identification-code",
+            ChzToken = "service-chz-token"
         });
         db.RefreshTokens.Add(new RefreshToken
         {
