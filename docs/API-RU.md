@@ -326,7 +326,7 @@ Schema updater заменяет старый table-level `UNIQUE
 
 ### GET `/api/configuration/current`
 
-Возвращает всю рабочую конфигурацию клиента и устройства одним запросом.
+Возвращает безопасную рабочую конфигурацию клиента и устройства одним запросом.
 
 Авторизация: Bearer активного зарегистрированного устройства.
 
@@ -334,7 +334,7 @@ Schema updater заменяет старый table-level `UNIQUE
 
 - `Clients` — клиент;
 - `Devices` — текущее устройство и физический адрес;
-- `ClientSettings` — пароль-идентификатор, токен ЧЗ, RuDesktop;
+- `ClientSettings` — только безопасные флаги RuDesktop;
 - `LicensePolicies` — ограничения лицензии;
 - `AppVersions` — глобальные версии;
 - `ClientComponentVersions` — overrides клиента;
@@ -359,8 +359,8 @@ effectiveVersion = overrideVersion ?? globalVersion
     "hasLmDatabaseBackup": true,
     "ruDesktopEnabled": false,
     "ruDesktopAutoOfferPasswordSetup": false,
-    "identificationCode": "HF-...",
-    "chzToken": "..."
+    "identificationCode": null,
+    "chzToken": null
   },
   "device": {
     "deviceId": "...",
@@ -392,9 +392,39 @@ effectiveVersion = overrideVersion ?? globalVersion
 }
 ```
 
-`chzToken` является чувствительным значением и должен использоваться только
-авторизованным HonestFlow. Ошибки: `401`, `403 client_disabled`,
-`403 device_pending`, `403 device_disabled`.
+Поля `identificationCode` и `chzToken` сохранены в ответе только для
+совместимости схемы и всегда равны `null`. Чувствительные значения выдаются
+отдельно только после проверки права Service.
+
+Ошибки: `401`, `403 client_disabled`, `403 device_pending`, `403 device_disabled`.
+
+### GET `/api/configuration/service`
+
+Возвращает пароль-идентификатор и токен ЧЗ для текущей пары клиент/устройство.
+
+Авторизация: Bearer активного зарегистрированного устройства **с действующим
+правом `Service`**. Active Device без Service получает `403 service_required`.
+
+Ответ `200`:
+
+```json
+{
+  "clientId": "...",
+  "deviceId": "...",
+  "identificationCode": "HF-...",
+  "chzToken": "..."
+}
+```
+
+HonestFlow хранит эти значения только в DPAPI-кэше текущего Windows-пользователя
+для работы в пределах разрешённого offline grace; они не входят в обычную
+конфигурацию, IPData или серверный журнал.
+
+> **Порядок выпуска.** Этот endpoint должен быть доступен до распространения
+> HonestFlow 3.0.1. После включения ограничения клиенты до 3.0.1 больше не
+> получают секреты из `/current`; для управляемого перехода задайте минимальную
+> версию клиента в политике лицензии и обновите рабочие места в одном окне
+> обслуживания.
 
 ## 7. Лицензия HonestFlow
 

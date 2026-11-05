@@ -288,6 +288,15 @@ namespace HonestLicense.Client
         /// <exception cref="ApiException">A server side error occurred.</exception>
         System.Threading.Tasks.Task<ConfigurationResponse> Configuration_CurrentAsync(System.Threading.CancellationToken cancellationToken);
 
+        /// <returns>Service-only configuration for the entitled device</returns>
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        System.Threading.Tasks.Task<ServiceConfigurationResponse> Configuration_ServiceAsync();
+
+        /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
+        /// <returns>Service-only configuration for the entitled device</returns>
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        System.Threading.Tasks.Task<ServiceConfigurationResponse> Configuration_ServiceAsync(System.Threading.CancellationToken cancellationToken);
+
         /// <returns>Created</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
         System.Threading.Tasks.Task<ConnectionRequestCreatedResponse> ConnectionRequests_CreateAsync(CreateConnectionRequest? body);
@@ -2776,6 +2785,75 @@ namespace HonestLicense.Client
             }
         }
 
+        /// <returns>Service-only configuration for the entitled device</returns>
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        public virtual System.Threading.Tasks.Task<ServiceConfigurationResponse> Configuration_ServiceAsync()
+        {
+            return Configuration_ServiceAsync(System.Threading.CancellationToken.None);
+        }
+
+        /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
+        /// <returns>Service-only configuration for the entitled device</returns>
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        public virtual async System.Threading.Tasks.Task<ServiceConfigurationResponse> Configuration_ServiceAsync(System.Threading.CancellationToken cancellationToken)
+        {
+            var client_ = _httpClient;
+            var disposeClient_ = false;
+            try
+            {
+                using (var request_ = new System.Net.Http.HttpRequestMessage())
+                {
+                    request_.Method = new System.Net.Http.HttpMethod("GET");
+                    request_.Headers.Accept.Add(System.Net.Http.Headers.MediaTypeWithQualityHeaderValue.Parse("application/json"));
+
+                    var urlBuilder_ = new System.Text.StringBuilder();
+                    if (!string.IsNullOrEmpty(_baseUrl)) urlBuilder_.Append(_baseUrl);
+                    // Operation Path: "api/configuration/service"
+                    urlBuilder_.Append("api/configuration/service");
+                    PrepareRequest(client_, request_, urlBuilder_);
+
+                    var url_ = urlBuilder_.ToString();
+                    request_.RequestUri = new System.Uri(url_, System.UriKind.RelativeOrAbsolute);
+                    PrepareRequest(client_, request_, url_);
+
+                    var response_ = await client_.SendAsync(request_, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                    var disposeResponse_ = true;
+                    try
+                    {
+                        var headers_ = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IEnumerable<string>>();
+                        foreach (var item_ in response_.Headers)
+                            headers_[item_.Key] = item_.Value;
+                        if (response_.Content != null && response_.Content.Headers != null)
+                            foreach (var item_ in response_.Content.Headers)
+                                headers_[item_.Key] = item_.Value;
+
+                        ProcessResponse(client_, response_);
+                        var status_ = (int)response_.StatusCode;
+                        if (status_ == 200)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ServiceConfigurationResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            return objectResponse_.Object;
+                        }
+
+                        var responseData_ = response_.Content == null ? null : await ReadAsStringAsync(response_.Content, cancellationToken).ConfigureAwait(false);
+                        throw new ApiException("The HTTP status code of the response was not expected (" + status_ + ").", status_, responseData_, headers_, null);
+                    }
+                    finally
+                    {
+                        if (disposeResponse_)
+                            response_.Dispose();
+                    }
+                }
+            }
+            finally
+            {
+                if (disposeClient_)
+                    client_.Dispose();
+            }
+        }
+
         /// <returns>Created</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
         public virtual System.Threading.Tasks.Task<ConnectionRequestCreatedResponse> ConnectionRequests_CreateAsync(CreateConnectionRequest? body)
@@ -3648,6 +3726,24 @@ namespace HonestLicense.Client
 
         [System.Text.Json.Serialization.JsonPropertyName("components")]
         public System.Collections.Generic.ICollection<ComponentConfiguration>? Components { get; set; }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ServiceConfigurationResponse
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("clientId")]
+        public string? ClientId { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("deviceId")]
+        public string? DeviceId { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("identificationCode")]
+        public string? IdentificationCode { get; set; }
+
+        [System.Text.Json.Serialization.JsonPropertyName("chzToken")]
+        public string? ChzToken { get; set; }
 
     }
 
