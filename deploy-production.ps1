@@ -79,6 +79,19 @@ function Invoke-Native {
     }
 }
 
+function Get-RemoteStableCommit {
+    $line = (& git -C $repository ls-remote --exit-code origin refs/heads/main | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($line)) {
+        throw "Unable to resolve the current origin/main commit."
+    }
+
+    $sha = ($line -split '\s+')[0]
+    if ($sha -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "origin/main returned an invalid commit SHA."
+    }
+    return $sha.ToLowerInvariant()
+}
+
 function Get-LaunchedFromExplorer {
     try {
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $PID"
@@ -209,6 +222,11 @@ wait_http_200() {
     done
     log "HTTP $HTTP_STATUS: $url"
     return 1
+}
+
+swagger_has_required_routes() {
+    curl --silent --show-error --fail --connect-timeout 5 --max-time 15 "$LOCAL_SWAGGER" | \
+        python3 -c 'import json, sys; paths = json.load(sys.stdin).get("paths", {}); raise SystemExit(0 if "/api/configuration/service" in paths else 1)'
 }
 
 service_is_active() {
@@ -408,6 +426,9 @@ deploy_code() {
     if [[ -z "$FAIL_REASON" ]] && ! wait_http_200 "$LOCAL_SWAGGER" 15 2; then
         FAIL_REASON="Local Swagger did not return HTTP 200."
     fi
+    if [[ -z "$FAIL_REASON" ]] && ! swagger_has_required_routes; then
+        FAIL_REASON="Local Swagger does not contain required route /api/configuration/service."
+    fi
     if [[ -z "$FAIL_REASON" ]] && ! production_sha_matches; then
         FAIL_REASON="Production binary SHA256 does not match the uploaded binary."
     fi
@@ -507,6 +528,9 @@ deploy_database() {
     if [[ -z "$FAIL_REASON" ]] && ! wait_http_200 "$LOCAL_SWAGGER" 15 2; then
         FAIL_REASON="Local Swagger did not return HTTP 200."
     fi
+    if [[ -z "$FAIL_REASON" ]] && ! swagger_has_required_routes; then
+        FAIL_REASON="Local Swagger does not contain required route /api/configuration/service."
+    fi
     if [[ -z "$FAIL_REASON" ]] && ! production_sha_matches; then
         FAIL_REASON="Production binary SHA256 does not match the uploaded binary."
     fi
@@ -564,6 +588,7 @@ function Test-GeneratedBash {
         "CRITICAL_ROLLBACK_NEEDS_MANUAL_CHECK", "DEPLOY_USER=", "SERVICE_USER=",
         'DATABASE_DIRECTORY="/var/lib/honestserver"', 'DEFAULT_SETTINGS="$ROOT/appsettings.json"',
         'LOCAL_SETTINGS="$ROOT/appsettings.Local.json"',
+        'swagger_has_required_routes()', '/api/configuration/service',
         'sudo install -m 600 -o "$SERVICE_USER"'
     )
     foreach ($marker in $requiredMarkers) {
@@ -619,11 +644,17 @@ try {
         throw "Unable to inspect the Git working tree."
     }
     Write-Host "Git commit: $commit"
-    if ($dirty.Count -gt 0) {
-        Write-Warning "The Git working tree is dirty. The published binary may not match commit $commit."
-    }
-    else {
+    if (-not $ValidateOnly) {
+        if ($dirty.Count -gt 0) {
+            throw "The Git working tree is dirty. Production deploy requires a clean checkout."
+        }
+
+        $stableCommit = Get-RemoteStableCommit
+        if ($commit.ToLowerInvariant() -ne $stableCommit) {
+            throw "Production deploy requires the current origin/main commit $stableCommit, but HEAD is $commit."
+        }
         Write-Host "Git working tree: clean"
+        Write-Host "Stable source: origin/main ($stableCommit)"
     }
 
     if (-not (Test-Path -LiteralPath $publishDirectory)) {
@@ -689,6 +720,7 @@ try {
     $binaryInfo = Get-Item -LiteralPath $binary
     $sha256 = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-Host "ELF magic: $elfMagic"
+    Write-Host "Published binary: $binary"
     Write-Host "SHA256: $sha256"
     Write-Host ("Size: {0:N0} bytes ({1:N2} MiB)" -f $binaryInfo.Length, ($binaryInfo.Length / 1MB))
 
