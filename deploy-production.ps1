@@ -15,6 +15,9 @@ Safely deploys HonestLicenseServer code or a code-plus-database-schema change.
 .\deploy-production.ps1 -Mode Database `
     -ExpectedColumn "DeviceRegistrationRequests.RequestedHonestFlowVersion" `
     -ValidateOnly
+
+.EXAMPLE
+.\deploy-production.ps1 -Mode Code -PublishOnly
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = "High")]
 param(
@@ -37,6 +40,8 @@ param(
     [string]$ServiceGroup = "honestflow-svc",
 
     [switch]$ValidateOnly,
+
+    [switch]$PublishOnly,
 
     [switch]$NoPause
 )
@@ -633,6 +638,9 @@ try {
     if ($Mode -eq "Code" -and -not [string]::IsNullOrWhiteSpace($ExpectedColumn)) {
         throw "ExpectedColumn is supported only in Database mode."
     }
+    if ($ValidateOnly -and $PublishOnly) {
+        throw "ValidateOnly and PublishOnly cannot be used together."
+    }
 
     Assert-Command "git"
     $commit = (& git -C $repository rev-parse HEAD | Out-String).Trim()
@@ -728,6 +736,15 @@ try {
         $DeploymentUser $ServiceUser $ServiceGroup
     Write-Utf8NoBomLf $generatedBash $content
     Test-GeneratedBash $generatedBash $content
+
+    if ($PublishOnly) {
+        Write-Step 4 "Upload skipped (-PublishOnly)"
+        Write-Step 5 "Remote preflight skipped"
+        Write-Step 6 "Deploy skipped"
+        Write-Step 7 "Remote verification skipped"
+        Write-Step 8 "PUBLISH_OK"
+        return
+    }
 
     if (-not $PSCmdlet.ShouldProcess($SshTarget, "$Mode production deploy of commit $commit")) {
         Write-Step 4 "Upload cancelled"
