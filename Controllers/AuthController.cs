@@ -84,8 +84,31 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
     public async Task<ActionResult<TokenResponse>> Refresh(RefreshRequest request)
     {
         var hash = TokenHelper.Hash(request.RefreshToken);
+        await using var transaction = await DeviceBindingGuard.BeginImmediateWriteAsync(db);
         var current = await db.RefreshTokens.SingleOrDefaultAsync(x => x.TokenHash == hash);
-        if (current is null || current.RevokedAtUtc is not null || current.ExpiresAtUtc <= DateTime.UtcNow)
+        if (current is null)
+            return ApiProblems.Create(HttpContext, StatusCodes.Status401Unauthorized,
+                "invalid_refresh_token", "Invalid refresh token");
+        if (current.RevokedAtUtc is not null)
+        {
+            if (current.ReplacedByTokenId is not null || string.Equals(current.RevokeReason, "rotated", StringComparison.Ordinal))
+            {
+                var activeFamily = await db.RefreshTokens
+                    .Where(x => x.TokenFamilyId == current.TokenFamilyId && x.RevokedAtUtc == null)
+                    .ToListAsync();
+                foreach (var token in activeFamily)
+                {
+                    token.RevokedAtUtc = DateTime.UtcNow;
+                    token.RevokeReason = "refresh_reuse_detected";
+                }
+                await db.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
+
+            return ApiProblems.Create(HttpContext, StatusCodes.Status401Unauthorized,
+                "invalid_refresh_token", "Invalid refresh token");
+        }
+        if (current.ExpiresAtUtc <= DateTime.UtcNow)
             return ApiProblems.Create(HttpContext, StatusCodes.Status401Unauthorized,
                 "invalid_refresh_token", "Invalid refresh token");
         var client = await db.Clients.FindAsync(current.ClientId);
@@ -111,6 +134,7 @@ public class AuthController(HonestDbContext db, LoginAttemptLimiter loginLimiter
         await db.SaveChangesAsync();
         current.ReplacedByTokenId = pair.Session.Id;
         await db.SaveChangesAsync();
+        await transaction.CommitAsync();
         return Ok(new TokenResponse(
             pair.AccessToken, pair.RefreshToken, 900, pair.Session.DeviceId is null,
             client.ExternalClientId, client.Name, licensePolicyEnabled));

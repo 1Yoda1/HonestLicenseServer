@@ -145,10 +145,10 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         var clientConfiguration = json.GetProperty("client");
         Assert.Equal("7701234567", clientConfiguration.GetProperty("inn").GetString());
-        Assert.Equal("integration-password",
-            clientConfiguration.GetProperty("identificationCode").GetString());
-        Assert.StartsWith("integration-chz-token",
-            clientConfiguration.GetProperty("chzToken").GetString());
+        Assert.Equal(JsonValueKind.Null,
+            clientConfiguration.GetProperty("identificationCode").ValueKind);
+        Assert.Equal(JsonValueKind.Null,
+            clientConfiguration.GetProperty("chzToken").ValueKind);
         var component = json.GetProperty("components").EnumerateArray().Single();
         Assert.Equal("2.6.2.0", component.GetProperty("globalVersion").GetString());
         Assert.Equal("2.5.0", component.GetProperty("effectiveVersion").GetString());
@@ -398,8 +398,11 @@ public sealed class ApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, reused.StatusCode);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", refreshedAccess);
+        var afterReuse = await client.GetAsync("/api/configuration/current");
+        Assert.Equal(HttpStatusCode.Unauthorized, afterReuse.StatusCode);
+
         var logout = await client.PostAsync("/api/auth/logout", null);
-        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, logout.StatusCode);
         var afterLogout = await client.GetAsync("/api/configuration/current");
         Assert.Equal(HttpStatusCode.Unauthorized, afterLogout.StatusCode);
 

@@ -70,11 +70,33 @@ public sealed class ConfigurationController(HonestDbContext db) : ControllerBase
             new ClientConfiguration(client.ExternalClientId, client.Name, client.Inn, client.Architecture,
                 client.HasLmDatabaseBackup, settings?.RuDesktopEnabled ?? false,
                 settings?.RuDesktopAutoOfferPasswordSetup ?? false,
-                settings?.IdentificationCode, settings?.ChzToken),
+                null, null),
             new DeviceConfiguration(device.ExternalDeviceId, device.Name, device.Address, device.Status),
             policy is null ? null : new LicensePolicyConfiguration(policy.IsEnabled,
                 policy.MinimumHonestFlowVersion, policy.OfflineGraceHours,
                 policy.SourceRevision, policy.SourceValidUntilUtc),
             components));
+    }
+
+    [HttpGet("service")]
+    [Authorize(Policy = OpaqueBearerDefaults.ServicePolicy)]
+    [ProducesResponseType<ServiceConfigurationResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ServiceConfigurationResponse>> Service(CancellationToken cancellationToken)
+    {
+        int clientId = User.ClientId();
+        int deviceId = User.DeviceId()!.Value;
+        var device = await db.Devices.AsNoTracking().SingleAsync(x =>
+            x.Id == deviceId && x.ClientId == clientId, cancellationToken);
+        var client = await db.Clients.AsNoTracking().SingleAsync(x => x.Id == clientId, cancellationToken);
+        var settings = await db.ClientSettings.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.ClientId == clientId, cancellationToken);
+
+        return Ok(new ServiceConfigurationResponse(
+            client.ExternalClientId,
+            device.ExternalDeviceId,
+            settings?.IdentificationCode,
+            settings?.ChzToken));
     }
 }

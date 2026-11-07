@@ -5,6 +5,7 @@ obj/
 singlefile-publish/
 publish-linux/
 artifacts/
+.worktrees/
 *.user
 *.pdb
 

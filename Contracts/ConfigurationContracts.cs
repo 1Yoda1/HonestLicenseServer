@@ -17,7 +17,12 @@ public sealed record ClientConfiguration(
     string ClientId, string Name, string? Inn, string? Architecture,
     bool HasLmDatabaseBackup, bool RuDesktopEnabled,
     bool RuDesktopAutoOfferPasswordSetup,
+    // Kept for wire compatibility with pre-3.0.1 clients. Public current
+    // configuration never contains the values; Service-only configuration does.
     string? IdentificationCode, string? ChzToken);
+
+public sealed record ServiceConfigurationResponse(
+    string ClientId, string DeviceId, string? IdentificationCode, string? ChzToken);
 
 public sealed record ClientIntegrationSettingsResponse(
     string ClientId, string? IdentificationCode, string? ChzToken,

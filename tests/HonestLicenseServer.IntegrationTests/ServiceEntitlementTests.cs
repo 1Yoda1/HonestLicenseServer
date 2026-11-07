@@ -216,6 +216,35 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
         using var client = AuthenticatedClient(fixture.AccessToken);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/configuration/current")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/license/current")).StatusCode);
+        await AssertServiceRequiredAsync(await client.GetAsync("/api/configuration/service"));
+    }
+
+    [Fact]
+    public async Task Missing_license_policy_denies_service_even_with_a_service_grant()
+    {
+        var fixture = await CreateFixtureAsync(policyEnabled: null);
+        await PublishGrantAsync(fixture, features: ["Service"]);
+
+        using var client = AuthenticatedClient(fixture.AccessToken);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/configuration/current")).StatusCode);
+        await AssertServiceRequiredAsync(await client.GetAsync("/api/configuration/service"));
+    }
+
+    [Fact]
+    public async Task Service_configuration_returns_sensitive_values_only_to_entitled_device()
+    {
+        var fixture = await CreateFixtureAsync();
+        await PublishGrantAsync(fixture, features: ["Service"]);
+
+        using var client = AuthenticatedClient(fixture.AccessToken);
+        var response = await client.GetAsync("/api/configuration/service");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(fixture.ExternalClientId, json.GetProperty("clientId").GetString());
+        Assert.Equal(fixture.ExternalDeviceId, json.GetProperty("deviceId").GetString());
+        Assert.Equal("service-identification-code", json.GetProperty("identificationCode").GetString());
+        Assert.Equal("service-chz-token", json.GetProperty("chzToken").GetString());
     }
 
     [Fact]
@@ -272,7 +301,7 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
         Assert.NotEqual(first.GetProperty("id").GetInt32(), next.GetProperty("id").GetInt32());
     }
 
-    private async Task<ServiceFixture> CreateFixtureAsync(bool policyEnabled = true)
+    private async Task<ServiceFixture> CreateFixtureAsync(bool? policyEnabled = true)
     {
         var suffix = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
@@ -304,14 +333,23 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
         db.AddRange(client, device);
         await db.SaveChangesAsync();
 
-        db.LicensePolicies.Add(new LicensePolicy
+        if (policyEnabled.HasValue)
+        {
+            db.LicensePolicies.Add(new LicensePolicy
+            {
+                ClientId = client.Id,
+                IsEnabled = policyEnabled.Value,
+                OfflineGraceHours = 0,
+                SourceRevision = 1,
+                SourceIssuedAtUtc = now,
+                SourceValidUntilUtc = now.AddDays(1)
+            });
+        }
+        db.ClientSettings.Add(new ClientSetting
         {
             ClientId = client.Id,
-            IsEnabled = policyEnabled,
-            OfflineGraceHours = 0,
-            SourceRevision = 1,
-            SourceIssuedAtUtc = now,
-            SourceValidUntilUtc = now.AddDays(1)
+            IdentificationCode = "service-identification-code",
+            ChzToken = "service-chz-token"
         });
         db.RefreshTokens.Add(new RefreshToken
         {
