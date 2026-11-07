@@ -15,6 +15,8 @@ public sealed class DeploymentScriptSafetyTests
         Assert.Contains("swagger_has_required_routes()", script, StringComparison.Ordinal);
         Assert.Contains("/api/configuration/service", script, StringComparison.Ordinal);
         Assert.Contains("Published binary: $binary", script, StringComparison.Ordinal);
+        Assert.Contains("[switch]$PublishOnly", script, StringComparison.Ordinal);
+        Assert.Contains("PUBLISH_OK", script, StringComparison.Ordinal);
     }
 
     private static string RepositoryFile(string fileName)
