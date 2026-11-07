@@ -24,8 +24,7 @@ public static class SqliteDatabaseConfigurationLoader
             connectionStringBuilder = new SqliteConnectionStringBuilder
             {
                 DataSource = configuredPath,
-                Mode = SqliteOpenMode.ReadWrite,
-                Cache = SqliteCacheMode.Shared
+                Mode = SqliteOpenMode.ReadWrite
             };
         }
         else
@@ -55,7 +54,8 @@ public static class SqliteDatabaseConfigurationLoader
             {
                 DataSource = connectionStringBuilder.DataSource,
                 Mode = SqliteOpenMode.ReadOnly,
-                Cache = SqliteCacheMode.Shared
+                Cache = SqliteCacheMode.Private,
+                Pooling = false
             };
             using var connection = new SqliteConnection(readOnlyConnectionString.ConnectionString);
             connection.Open();
