@@ -301,6 +301,55 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
         Assert.NotEqual(first.GetProperty("id").GetInt32(), next.GetProperty("id").GetInt32());
     }
 
+    [Fact]
+    public async Task Remote_request_rate_limit_does_not_block_diagnostic_uploads()
+    {
+        ServiceFixture fixture = await CreateFixtureAsync();
+        await PublishGrantAsync(fixture, features: ["Service"]);
+        string credentialId = Guid.NewGuid().ToString("D");
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<HonestDbContext>();
+            db.RemoteAccessCredentials.Add(new RemoteAccessCredential
+            {
+                DeviceId = fixture.DeviceId,
+                ClientId = fixture.ClientId,
+                CredentialId = credentialId,
+                KeyId = Guid.NewGuid().ToString("D"),
+                RuDesktopId = "987654321",
+                CiphertextBase64 = Convert.ToBase64String(new byte[384]),
+                IsActive = true,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var client = AuthenticatedClient(fixture.AccessToken);
+        var request = new
+        {
+            credentialId,
+            subject = "Remote help",
+            message = "Repeated idempotent request used to verify the endpoint limit.",
+            contact = "Service client",
+            honestFlowVersion = "3.0.0"
+        };
+        for (int attempt = 0; attempt < 5; attempt++)
+            Assert.Equal(HttpStatusCode.Accepted,
+                (await client.PostAsJsonAsync("/api/support/remote-requests", request)).StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests,
+            (await client.PostAsJsonAsync("/api/support/remote-requests", request)).StatusCode);
+
+        HttpResponseMessage diagnostics = await client.PostAsJsonAsync("/api/support/diagnostics/uploads", new
+        {
+            fileName = "diagnostics.zip",
+            sizeBytes = 4,
+            sha256 = new string('A', 64),
+            honestFlowVersion = "3.0.0"
+        });
+
+        Assert.Equal(HttpStatusCode.OK, diagnostics.StatusCode);
+    }
+
     private async Task<ServiceFixture> CreateFixtureAsync(bool? policyEnabled = true)
     {
         var suffix = Guid.NewGuid().ToString("N");
