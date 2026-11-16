@@ -177,9 +177,19 @@ builder.Services.AddRateLimiter(options =>
             QueueLimit = 0,
             AutoReplenishment = true
         }));
-    options.AddPolicy("support", context => RateLimitPartition.GetFixedWindowLimiter(
-        context.User.FindFirst(HonestClaimTypes.ClientId)?.Value ??
-        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+    options.AddPolicy("support-requests", context => RateLimitPartition.GetFixedWindowLimiter(
+        $"{context.User.FindFirst(HonestClaimTypes.ClientId)?.Value ?? "unknown"}:" +
+        $"{context.User.FindFirst(HonestClaimTypes.DeviceId)?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromHours(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
+    options.AddPolicy("diagnostic-uploads", context => RateLimitPartition.GetFixedWindowLimiter(
+        $"{context.User.FindFirst(HonestClaimTypes.ClientId)?.Value ?? "unknown"}:" +
+        $"{context.User.FindFirst(HonestClaimTypes.DeviceId)?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}",
         _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 5,

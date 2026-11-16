@@ -119,7 +119,7 @@ public sealed class SupportController(
 
     [HttpPost("remote-requests")]
     [Authorize(Policy = OpaqueBearerDefaults.ServicePolicy)]
-    [EnableRateLimiting("support")]
+    [EnableRateLimiting("support-requests")]
     public async Task<ActionResult<SupportRequestAcceptedResponse>> CreateRemoteRequest(CreateRemoteSupportRequest request)
     {
         if (User.DeviceId() is not int deviceId) return Forbid();
@@ -156,7 +156,7 @@ public sealed class SupportController(
 
     [HttpPost("requests")]
     [Authorize(Policy = OpaqueBearerDefaults.ServicePolicy)]
-    [EnableRateLimiting("support")]
+    [EnableRateLimiting("support-requests")]
     [ProducesResponseType<SupportRequestAcceptedResponse>(StatusCodes.Status202Accepted)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -179,7 +179,7 @@ public sealed class SupportController(
 
     [HttpPost("diagnostics/uploads")]
     [Authorize(Policy = OpaqueBearerDefaults.ServicePolicy)]
-    [EnableRateLimiting("support")]
+    [EnableRateLimiting("diagnostic-uploads")]
     public async Task<ActionResult<DiagnosticUploadResponse>> CreateDiagnosticUpload(
         CreateDiagnosticUploadRequest request, CancellationToken cancellationToken)
     {
