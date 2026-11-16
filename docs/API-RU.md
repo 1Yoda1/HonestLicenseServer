@@ -1307,3 +1307,13 @@ sudo journalctl -u honestserver -n 100 --no-pager
 - нет endpoint изменения статуса `SupportRequests`;
 - Swagger отражает маршруты и схемы, но часть admin-ответов пока описана
   анонимными DTO и имеет минимум пояснений.
+
+## Размещение компонентов устройства
+
+В Devices хранится ComponentsHostedOnServer (по умолчанию false).
+GET /api/admin/devices и GET /api/configuration/current (device) возвращают
+componentsHostedOnServer. PUT /api/admin/devices/{id} принимает необязательное
+nullable-поле componentsHostedOnServer: отсутствие/null сохраняет прежнее
+значение для совместимости со старыми HD. true исключает локальные проверки
+и управление ЛМ ЧЗ/Контроллером в HF; адрес сервера не требуется.
+После изменения следует переподключить Service в HF.

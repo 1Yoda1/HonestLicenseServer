@@ -31,6 +31,7 @@ public class Credential
 
 public class Device
 {
+    public bool ComponentsHostedOnServer { get; set; }
     public int Id { get; set; }
     public int ClientId { get; set; }
     public required string ExternalDeviceId { get; set; }
