@@ -3879,6 +3879,8 @@ namespace HonestLicense.Client
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class DeviceConfiguration
     {
+        [System.Text.Json.Serialization.JsonPropertyName("componentsHostedOnServer")]
+        public bool ComponentsHostedOnServer { get; set; }
 
         [System.Text.Json.Serialization.JsonPropertyName("deviceId")]
         public string? DeviceId { get; set; }
@@ -4209,6 +4211,8 @@ namespace HonestLicense.Client
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class UpdateDeviceRequest
     {
+        [System.Text.Json.Serialization.JsonPropertyName("componentsHostedOnServer")]
+        public bool? ComponentsHostedOnServer { get; set; }
 
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string? Name { get; set; }

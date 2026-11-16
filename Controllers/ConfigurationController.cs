@@ -71,7 +71,7 @@ public sealed class ConfigurationController(HonestDbContext db) : ControllerBase
                 client.HasLmDatabaseBackup, settings?.RuDesktopEnabled ?? false,
                 settings?.RuDesktopAutoOfferPasswordSetup ?? false,
                 null, null),
-            new DeviceConfiguration(device.ExternalDeviceId, device.Name, device.Address, device.Status),
+            new DeviceConfiguration(device.ExternalDeviceId, device.Name, device.Address, device.Status, device.ComponentsHostedOnServer),
             policy is null ? null : new LicensePolicyConfiguration(policy.IsEnabled,
                 policy.MinimumHonestFlowVersion, policy.OfflineGraceHours,
                 policy.SourceRevision, policy.SourceValidUntilUtc),

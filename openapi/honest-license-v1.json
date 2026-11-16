@@ -2755,6 +2755,7 @@
       "DeviceConfiguration": {
         "type": "object",
         "properties": {
+          "componentsHostedOnServer": { "type": "boolean", "default": false },
           "deviceId": {
             "type": "string",
             "nullable": true
@@ -3274,6 +3275,7 @@
       "UpdateDeviceRequest": {
         "type": "object",
         "properties": {
+          "componentsHostedOnServer": { "type": "boolean", "nullable": true },
           "name": {
             "type": "string",
             "nullable": true

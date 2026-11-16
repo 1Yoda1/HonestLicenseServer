@@ -168,7 +168,7 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         if (!string.IsNullOrWhiteSpace(clientId)) query = query.Where(x => x.Client.ExternalClientId == clientId);
         var devices = await query.OrderBy(x => x.Client.Name).ThenBy(x => x.Name).Select(x => new
         { x.Id, clientId = x.Client.ExternalClientId, clientName = x.Client.Name,
-          storedDeviceId = x.ExternalDeviceId, x.Name, x.Address, x.Comment, x.Status, x.RegisteredAtUtc }).ToListAsync();
+          storedDeviceId = x.ExternalDeviceId, x.Name, x.Address, x.Comment, x.Status, x.ComponentsHostedOnServer, x.RegisteredAtUtc }).ToListAsync();
         return Ok(devices.Select(x =>
         {
             bool released = ReleasedDeviceIdentity.TryGetOriginal(x.Id, x.storedDeviceId, out string originalDeviceId);
@@ -182,6 +182,7 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
                 x.Address,
                 x.Comment,
                 x.Status,
+                x.ComponentsHostedOnServer,
                 x.RegisteredAtUtc,
                 deviceIdReleased = released
             };
@@ -222,12 +223,14 @@ public class AdminController(HonestDbContext db, IConfiguration configuration,
         var device = await db.Devices.FindAsync(id);
         if (device is null) return NotFound(new { error = "device_not_found" });
         device.Name = request.Name; device.Address = request.Address; device.Comment = request.Comment; device.Status = request.Status;
+        if (request.ComponentsHostedOnServer.HasValue)
+            device.ComponentsHostedOnServer = request.ComponentsHostedOnServer.Value;
         if (request.Status != "Active")
         {
             var sessions = await db.RefreshTokens.Where(x => x.DeviceId == id && x.RevokedAtUtc == null).ToListAsync();
             foreach (var session in sessions) { session.RevokedAtUtc = DateTime.UtcNow; session.RevokeReason = "device_disabled"; }
         }
-        AddAudit("Device.Updated", "Device", id.ToString(), device.ClientId, new { request.Status });
+        AddAudit("Device.Updated", "Device", id.ToString(), device.ClientId, new { request.Status, device.ComponentsHostedOnServer });
         await db.SaveChangesAsync(); return NoContent();
     }
 
@@ -1131,7 +1134,7 @@ public record CreateClientRequest(string ClientId, string Name, string Login, st
     string? Inn, string? Architecture, bool HasLmDatabaseBackup = false, string? ChzToken = null);
 public record UpdateClientRequest(string Name, string? Inn, string? Architecture, bool IsActive, bool HasLmDatabaseBackup);
 public record CreateDeviceRequest(string ClientId, string DeviceId, string Name, string? Address, string? Comment);
-public record UpdateDeviceRequest(string Name, string? Address, string? Comment, string Status);
+public record UpdateDeviceRequest(string Name, string? Address, string? Comment, string Status, bool? ComponentsHostedOnServer = null);
 public record PublishLicenseRequest(string GrantBase64, string SignatureBase64, string? KeyId);
 public record PutVersionRequest(string CurrentVersion);
 public record ResolveDeviceRequest(string? Name, string? Address, string? Comment);

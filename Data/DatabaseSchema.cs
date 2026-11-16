@@ -153,6 +153,7 @@ public static class DatabaseSchema
         {
             if (!await HasColumnAsync(connection, "ComponentAssets", "Architecture", cancellationToken))
                 await RebuildComponentAssetsAsync(connection, cancellationToken);
+            await EnsureColumnAsync(connection, "Devices", "ComponentsHostedOnServer", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
             await EnsureColumnAsync(connection, "ComponentAssets", "ObjectKey", "TEXT NULL", cancellationToken);
             await EnsureColumnAsync(connection, "ComponentAssets", "ReleaseKeyId", "TEXT NULL", cancellationToken);
             await EnsureColumnAsync(connection, "ComponentAssets", "ManifestBase64", "TEXT NULL", cancellationToken);

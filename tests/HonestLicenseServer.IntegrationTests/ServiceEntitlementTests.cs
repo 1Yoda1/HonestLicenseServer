@@ -350,6 +350,38 @@ public sealed class ServiceEntitlementTests(ApiFactory factory) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, diagnostics.StatusCode);
     }
 
+    [Fact]
+    public async Task Device_component_placement_roundtrips_and_legacy_updates_preserve_it()
+    {
+        ServiceFixture fixture = await CreateFixtureAsync();
+        using var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Add("X-Admin-Key", ApiFactory.AdminKey);
+        using var client = AuthenticatedClient(fixture.AccessToken);
+        string path = $"/api/admin/devices/{fixture.DeviceId}";
+        var before = await client.GetFromJsonAsync<JsonElement>("/api/configuration/current");
+        Assert.False(before.GetProperty("device").GetProperty("componentsHostedOnServer").GetBoolean());
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync(path, new
+        {
+            name = "Server topology device", address = "Shop", comment = "", status = "Active",
+            componentsHostedOnServer = true
+        })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync(path, new
+        {
+            name = "Renamed by legacy HD", address = "Shop", comment = "", status = "Active"
+        })).StatusCode);
+        var current = await client.GetFromJsonAsync<JsonElement>("/api/configuration/current");
+        Assert.True(current.GetProperty("device").GetProperty("componentsHostedOnServer").GetBoolean());
+        var devices = await admin.GetFromJsonAsync<JsonElement>($"/api/admin/devices?clientId={fixture.ExternalClientId}");
+        Assert.True(devices[0].GetProperty("componentsHostedOnServer").GetBoolean());
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync(path, new
+        {
+            name = "Local topology device", address = "Shop", comment = "", status = "Active",
+            componentsHostedOnServer = false
+        })).StatusCode);
+        current = await client.GetFromJsonAsync<JsonElement>("/api/configuration/current");
+        Assert.False(current.GetProperty("device").GetProperty("componentsHostedOnServer").GetBoolean());
+    }
+
     private async Task<ServiceFixture> CreateFixtureAsync(bool? policyEnabled = true)
     {
         var suffix = Guid.NewGuid().ToString("N");

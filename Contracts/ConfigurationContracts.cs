@@ -44,7 +44,7 @@ public sealed record PutClientLicensePolicyRequest
 }
 
 public sealed record DeviceConfiguration(
-    string DeviceId, string Name, string? Address, string Status);
+    string DeviceId, string Name, string? Address, string Status, bool ComponentsHostedOnServer = false);
 
 public sealed record LicensePolicyConfiguration(
     bool IsEnabled, string? MinimumHonestFlowVersion,
